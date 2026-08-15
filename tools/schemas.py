@@ -92,9 +92,13 @@ TOOL_SCHEMAS = [
                     "command": {
                         "type": "string",
                         "description": "The shell command to execute.",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "A short explanation of why this command needs to be executed.",
                     }
                 },
-                "required": ["command"],
+                "required": ["command", "reason"],
             },
         },
     },
@@ -114,8 +118,12 @@ TOOL_SCHEMAS = [
                         "type": "string",
                         "description": "Log filename to append output to (default: server.log).",
                     },
+                    "reason": {
+                        "type": "string",
+                        "description": "A short explanation of why this command needs to be executed in the background.",
+                    }
                 },
-                "required": ["command"],
+                "required": ["command", "reason"],
             },
         },
     },

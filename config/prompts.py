@@ -37,7 +37,15 @@ PROTOCOL & RULES:
    - To start a web server or long-running service, always use `run_background_command` instead of `execute_command`.
    - After starting a server, use `read_file` on its log file to verify it started cleanly.
 
-6. FINAL RESPONSE:
+6. SANDBOX SAFETY RULES:
+   - You are working inside an isolated project directory.
+   - You may run package management commands, but every command requires user approval.
+   - Always provide a clear `reason` parameter when calling execute_command or run_background_command.
+   - NEVER run destructive system commands (sudo, rm -rf, chmod, global installs).
+   - NEVER attempt to access files outside the project directory.
+   - When starting a dev server, use the port provided by the system.
+
+7. FINAL RESPONSE:
    - When all tools have been executed and the application is ready, write your final response to the user outside of <think> tags (with no JSON tool calls). Explain what you built and provide the preview URL.
 """
 

@@ -132,7 +132,7 @@ class CodingHarness(BaseHarness):
                 })
 
                 # Execute all requested tools
-                async for event in self._execute_tool_calls(tool_calls, tool_map, messages):
+                async for event in self._execute_tool_calls(tool_calls, tool_map, messages, context):
                     yield event
 
             yield {
@@ -164,8 +164,11 @@ class CodingHarness(BaseHarness):
         tool_calls: List[Dict[str, Any]],
         tool_map: Dict[str, Any],
         messages: List[Dict[str, Any]],
+        context: Dict[str, Any],
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """Executes a list of tool calls, yields frontend events, and updates conversation history."""
+        request_approval = context.get("request_approval")
+
         for tool_call in tool_calls:
             func_name = tool_call.get("name", "")
             func_args = tool_call.get("arguments", {})
@@ -175,6 +178,21 @@ class CodingHarness(BaseHarness):
                 "name": func_name,
                 "arguments": func_args,
             }
+
+            if func_name in ["execute_command", "run_background_command"] and request_approval:
+                command = func_args.get("command", "")
+                reason = func_args.get("reason", "No reason provided")
+                
+                approved = await request_approval(command, reason)
+                if not approved:
+                    result = "User denied this command. Please rethink your approach or ask the user for guidance."
+                    yield {
+                        "type": "tool_result",
+                        "name": func_name,
+                        "result": result,
+                    }
+                    messages.append({"role": "tool", "content": result})
+                    continue
 
             result = await asyncio.to_thread(self._run_tool, func_name, func_args, tool_map)
             display_result = self._format_display_result(result)

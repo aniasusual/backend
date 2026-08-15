@@ -1,8 +1,12 @@
 import os
 import subprocess
+import signal
+import socket
 from pathlib import Path
-from typing import Dict, Callable
+from typing import Dict, Any, Callable, List, Any
 from subagents.ui_subagent import UITestingSubagent
+
+from project_manager.manager import PROJECTS_ROOT
 
 
 class ToolRegistry:
@@ -11,11 +15,26 @@ class ToolRegistry:
     All file operations are confined to the sandbox directory.
     """
 
-    def __init__(self, sandbox_dir: str):
+    def __init__(self, sandbox_dir: str | Path, event_callback: Callable[[dict], None] = None):
+        """
+        Initialize the tool registry for a specific sandbox directory.
+        
+        Args:
+            sandbox_dir: The directory where all commands and file operations will be constrained.
+            event_callback: Optional callback to emit asynchronous events (e.g., preview_ready).
+        """
         self.sandbox_path = Path(sandbox_dir).resolve()
+        
+        # Ensure the path is safely under the projects root
+        if PROJECTS_ROOT not in self.sandbox_path.parents and self.sandbox_path != PROJECTS_ROOT:
+             raise ValueError(f"Security Error: Project path {self.sandbox_path} is not under {PROJECTS_ROOT}")
+
         # Ensure the sandbox directory exists
         self.sandbox_path.mkdir(parents=True, exist_ok=True)
-        self.background_processes = {}
+        self.event_callback = event_callback
+        
+        # Maps pid -> { "process": Popen, "command": str, "log_filename": str, "port": int | None }
+        self.background_processes: Dict[int, Dict[str, Any]] = {}
 
     def _is_safe_path(self, file_path: str) -> bool:
         """Verify the path is within the sandbox directory."""
@@ -24,6 +43,24 @@ class ToolRegistry:
             return self.sandbox_path in target_path.parents or target_path == self.sandbox_path
         except Exception:
             return False
+
+    def _find_free_port(self) -> int:
+        """Find an available port on the host."""
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(('', 0))
+            return s.getsockname()[1]
+
+    def _is_command_safe(self, command: str) -> str | None:
+        """
+        Check if a command is blacklisted.
+        Returns an error message if blacklisted, or None if safe.
+        """
+        cmd_lower = command.lower()
+        blacklist = ["sudo ", "rm -rf", "chmod 777", "curl ", "wget ", "npm -g", "npm install -g", "../"]
+        for bad in blacklist:
+            if bad in cmd_lower:
+                return f"Error: Command rejected due to security policy (contains '{bad}')."
+        return None
 
     def get_tools(self) -> Dict[str, Callable]:
         """Returns a mapping of tool name -> callable for dynamic dispatch."""
@@ -165,16 +202,23 @@ class ToolRegistry:
         except Exception as e:
             return f"Error listing directory: {str(e)}"
 
-    def execute_command(self, command: str) -> str:
+    def execute_command(self, command: str, reason: str = "") -> str:
         """Execute a shell command in the sandbox directory.
 
         Args:
             command: The shell command to execute.
+            reason: Explanation of why this command needs to run.
 
         Returns:
             The command output (stdout on success, stderr on failure).
         """
         cmd_clean = command.strip()
+        
+        # Blacklist check
+        err = self._is_command_safe(cmd_clean)
+        if err:
+            return err
+            
         if cmd_clean.startswith("cd ") or cmd_clean == "cd":
             return (
                 "Note: Standalone 'cd' command executed, but shell directory state does NOT persist "
@@ -204,37 +248,73 @@ class ToolRegistry:
         except Exception as e:
             return f"Error executing command: {str(e)}"
 
-    def run_background_command(self, command: str, log_filename: str = "server.log") -> str:
+    def run_background_command(self, command: str, reason: str = "", log_filename: str = "server.log") -> str:
         """Execute a shell command in the background (useful for starting web servers).
         
         Args:
             command: The shell command to execute in the background.
+            reason: Explanation of why this command needs to run in the background.
             log_filename: The name of the log file to append output to (default: server.log).
             
         Returns:
             A message indicating the process started with its PID.
         """
+        # Blacklist check
+        err = self._is_command_safe(command)
+        if err:
+            return err
+
         # Check if the exact command is already running
-        for pid, process in list(self.background_processes.items()):
-            if getattr(process, "command_str", None) == command and process.poll() is None:
-                existing_log = getattr(process, "log_filename", "unknown.log")
+        for pid, info in list(self.background_processes.items()):
+            if info["command"] == command and info["process"].poll() is None:
+                existing_log = info["log_filename"]
                 return f"Command is already running in the background with PID {pid}. Logs are in '{existing_log}'."
+
+        port = self._find_free_port()
+        # Inject port into command if possible. Assumes standard dev server flags.
+        # E.g. 'npm run dev' -> 'npm run dev -- --port 12345'
+        # E.g. 'python -m http.server' -> 'python -m http.server 12345'
+        if "npm run" in command or "npx" in command or "vite" in command or "next" in command:
+            cmd_with_port = f"{command} -- --port {port}" if "npm run" in command else f"{command} --port {port}"
+        elif "python" in command and "http.server" in command:
+            cmd_with_port = f"{command} {port}"
+        else:
+            # Fallback if we don't know how to pass the port, just set PORT env var
+            cmd_with_port = command
 
         try:
             log_path = self.sandbox_path / log_filename
             log_file = open(log_path, "a")  # Append instead of overwrite
             
+            env = os.environ.copy()
+            env["PORT"] = str(port)
+
             process = subprocess.Popen(
-                command,
+                cmd_with_port,
                 shell=True,
-                cwd=str(self.sandbox_path),
+                cwd=self.sandbox_path,
                 stdout=log_file,
-                stderr=subprocess.STDOUT
+                stderr=subprocess.STDOUT,
+                env=env,
+                preexec_fn=os.setsid  # Start in a new process group
             )
-            process.command_str = command
-            process.log_filename = log_filename
-            self.background_processes[process.pid] = process
-            return f"Background process started with PID {process.pid}. Logs are being appended to '{log_filename}'. Use read_file to check its output."
+            
+            self.background_processes[process.pid] = {
+                "process": process,
+                "command": command,
+                "log_filename": log_filename,
+                "port": port
+            }
+            
+            # Emit preview ready event
+            if self.event_callback:
+                self.event_callback({
+                    "type": "preview_ready",
+                    "port": port,
+                    "url": f"http://localhost:{port}"
+                })
+                
+            return f"Started background process with PID {process.pid} on port {port}. Logs are being written to '{log_filename}'. Use read_file to check its output."
         except Exception as e:
             return f"Error starting background command: {str(e)}"
             
@@ -247,22 +327,37 @@ class ToolRegistry:
         Returns:
             A success or error message.
         """
-        process = self.background_processes.get(pid)
-        if not process:
+        info = self.background_processes.get(pid)
+        if not info:
             return f"Error: No background process found with PID {pid}."
             
         try:
-            process.terminate()
+            os.killpg(os.getpgid(info["process"].pid), signal.SIGTERM)
             del self.background_processes[pid]
-            return f"Successfully terminated process {pid}."
+            if self.event_callback:
+                self.event_callback({"type": "preview_stopped"})
+            return f"Successfully stopped background process with PID {pid}."
         except Exception as e:
             return f"Error terminating process {pid}: {str(e)}"
-            
+
+    def get_active_processes(self) -> List[Dict[str, Any]]:
+        """Returns a list of currently active background processes."""
+        active = []
+        for pid, info in list(self.background_processes.items()):
+            if info["process"].poll() is None:
+                active.append({
+                    "pid": pid,
+                    "command": info["command"],
+                    "log_filename": info["log_filename"],
+                    "port": info.get("port")
+                })
+        return active
+
     def cleanup(self):
         """Kill all tracked background processes."""
-        for pid, process in list(self.background_processes.items()):
+        for pid, info in list(self.background_processes.items()):
             try:
-                process.terminate()
+                info["process"].terminate()
             except Exception:
                 pass
         self.background_processes.clear()
