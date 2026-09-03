@@ -1,0 +1,48 @@
+apiVersion: agents.v1
+kind: Agent
+metadata:
+  id: cloud_frontier
+  name: Cloud Frontier Orchestrator (Claude 3.7 / GPT-4o)
+  version: 1
+  description: "Elite orchestrator for frontier cloud APIs with comprehensive subagent delegation."
+  tags: [cloud, frontier, claude, gpt]
+
+spec:
+  tier: 4
+  context_window: 200000
+  max_iterations: 100
+  prompt_id: "workstation_32b_agent"
+  is_reasoning_model: false
+  strip_think_tags: false
+  text_fallback_parser: true
+
+  whitelisted_tools:
+    - glob_files
+    - view_bulk
+    - read_file
+    - write_file
+    - write_files
+    - edit_file
+    - insert_text
+    - grep_search
+    - list_directory
+    - lint_javascript
+    - get_assets
+    - ask_human
+    - finish
+    - execute_command
+    - run_background_command
+    - stop_background_command
+
+  enabled_subagents:
+    - invoke_design_agent
+    - invoke_troubleshoot_agent
+    - invoke_vision_agent
+    - test_ui
+
+  target_models:
+    - "claude-3-7-sonnet"
+    - "claude-3-5-sonnet"
+    - "gpt-4o"
+    - "gpt-4.5-preview"
+    - "gemini-2.5-pro"

@@ -1,0 +1,46 @@
+apiVersion: agents.v1
+kind: Agent
+metadata:
+  id: deepseek_r1_reasoning
+  name: DeepSeek R1 Reasoning Distill Agent
+  version: 1
+  description: "Chain-of-thought preservation with <think> tag extraction and JSON fallback parsing."
+  tags: [reasoning, r1, distill]
+
+spec:
+  tier: 3
+  context_window: 64000
+  max_iterations: 40
+  prompt_id: "reasoning_r1_agent"
+  is_reasoning_model: true
+  strip_think_tags: true
+  text_fallback_parser: true
+
+  whitelisted_tools:
+    - glob_files
+    - view_bulk
+    - read_file
+    - write_file
+    - write_files
+    - edit_file
+    - insert_text
+    - grep_search
+    - list_directory
+    - lint_javascript
+    - get_assets
+    - ask_human
+    - finish
+    - execute_command
+    - run_background_command
+    - stop_background_command
+
+  enabled_subagents:
+    - invoke_design_agent
+    - invoke_troubleshoot_agent
+    - invoke_vision_agent
+    - test_ui
+
+  target_models:
+    - "deepseek-r1:8b"
+    - "deepseek-r1:14b"
+    - "deepseek-r1:32b"

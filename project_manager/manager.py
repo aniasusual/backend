@@ -15,18 +15,20 @@ import signal
 import shutil
 import platform
 import subprocess
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
 from project_manager.models import ProjectInfo, _now_iso
+from project_manager.template_manager import TemplateManager
 
+try:
+    from config.settings import PROJECTS_ROOT
+except ImportError:
+    PROJECTS_ROOT = Path(os.getenv("PROJECTS_ROOT", str(Path.home() / ".lowkey" / "projects"))).expanduser().resolve()
 
 # ──────────────────────────────────────────────
 # Constants
 # ──────────────────────────────────────────────
-
-PROJECTS_ROOT = Path.home() / ".lowkey" / "projects"
 
 # Project name constraints
 MAX_NAME_LENGTH = 50
@@ -46,25 +48,28 @@ class ProjectManager:
     with no shared configuration.
     """
 
-    def __init__(self, root: Optional[Path] = None):
+    def __init__(self, root: Optional[Path] = None, template_manager: Optional[TemplateManager] = None):
         """
         Args:
             root: Override the default projects root directory.
                   Useful for testing. Defaults to ~/.lowkey/projects/.
+            template_manager: Optional custom TemplateManager instance.
         """
         self.root = (root or PROJECTS_ROOT).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
+        self.template_manager = template_manager or TemplateManager()
 
     # ──────────────────────────────────────────
     # CRUD Operations
     # ──────────────────────────────────────────
 
-    def create_project(self, name: str) -> ProjectInfo:
+    def create_project(self, name: str, template: str = "node_react") -> ProjectInfo:
         """
-        Create a new project directory with metadata.
+        Create a new project directory with metadata and scaffolded template files.
 
         Args:
             name: A kebab-case project name (e.g., "todo-app").
+            template: The template to scaffold (default: "node_react").
 
         Returns:
             The created ProjectInfo.
@@ -83,9 +88,17 @@ class ProjectManager:
 
         project_dir.mkdir(parents=True)
 
+        # Scaffold template files (Express + React + Vite)
+        if template:
+            try:
+                self.template_manager.scaffold_project(project_dir, template_name=template)
+            except Exception as e:
+                print(f"[ProjectManager] Template scaffolding error: {e}")
+
         project = ProjectInfo(
             name=validated_name,
             path=project_dir,
+            template=template,
             status="stopped",
         )
         project.save_meta()
@@ -158,7 +171,7 @@ class ProjectManager:
 
         return project
 
-    def get_or_create_project(self, name: str) -> ProjectInfo:
+    def get_or_create_project(self, name: str, template: str = "node_react") -> ProjectInfo:
         """
         Get a project by name, or create it if it doesn't exist.
         If the directory exists but is missing metadata, the metadata will be recreated.
@@ -167,11 +180,11 @@ class ProjectManager:
             return self.get_project(name)
         except ValueError as e:
             if "not found" in str(e):
-                return self.create_project(name)
+                return self.create_project(name, template=template)
             elif "no valid metadata" in str(e):
                 validated_name = self._validate_name(name)
                 project_dir = self.root / validated_name
-                project = ProjectInfo(name=validated_name, path=project_dir)
+                project = ProjectInfo(name=validated_name, path=project_dir, template=template)
                 project.save_meta()
                 return project
             raise

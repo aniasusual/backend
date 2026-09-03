@@ -1,0 +1,45 @@
+apiVersion: agents.v1
+kind: Agent
+metadata:
+  id: codestral_22b
+  name: Codestral 22B Flagship Agent
+  version: 1
+  description: "Mistral coding flagship with fast infilling and full tool execution."
+  tags: [codestral, 22b, mistral]
+
+spec:
+  tier: 2
+  context_window: 64000
+  max_iterations: 50
+  prompt_id: "intermediate_14b_agent"
+  is_reasoning_model: false
+  strip_think_tags: false
+  text_fallback_parser: true
+
+  whitelisted_tools:
+    - glob_files
+    - view_bulk
+    - read_file
+    - write_file
+    - write_files
+    - edit_file
+    - insert_text
+    - grep_search
+    - list_directory
+    - lint_javascript
+    - get_assets
+    - ask_human
+    - finish
+    - execute_command
+    - run_background_command
+    - stop_background_command
+
+  enabled_subagents:
+    - invoke_design_agent
+    - invoke_troubleshoot_agent
+    - invoke_vision_agent
+    - test_ui
+
+  target_models:
+    - "codestral:22b"
+    - "mistral-large"

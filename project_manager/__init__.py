@@ -11,5 +11,6 @@ Usage:
 
 from project_manager.models import ProjectInfo
 from project_manager.manager import ProjectManager
+from project_manager.chat_history import ChatHistoryManager
 
-__all__ = ["ProjectManager", "ProjectInfo"]
+__all__ = ["ProjectManager", "ProjectInfo", "ChatHistoryManager"]

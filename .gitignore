@@ -74,3 +74,4 @@ Thumbs.db
 
 # Project specific local sandbox output
 sandbox/
+templates/node_react/node_modules/

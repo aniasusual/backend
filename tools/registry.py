@@ -1,40 +1,96 @@
-import os
-import subprocess
-import signal
-import socket
+from __future__ import annotations
 from pathlib import Path
-from typing import Dict, Any, Callable, List, Any
-from subagents.ui_subagent import UITestingSubagent
+from typing import Dict, Any, Callable, List, Optional
 
-from project_manager.manager import PROJECTS_ROOT
+from config.settings import PROJECTS_ROOT
+from tools.file_tools import FileTools
+from tools.linter_tools import LinterTools
+from tools.process_tools import ProcessTools
+from tools.asset_tools import AssetTools
+from tools.interaction_tools import InteractionTools
+from subagents.ui_subagent import UITestingSubagent
+from subagents.design_subagent import DesignSubagent
+from subagents.troubleshoot_subagent import TroubleshootSubagent
+from subagents.vision_subagent import VisionExpertSubagent
 
 
 class ToolRegistry:
     """
     Manages safe execution of tools within a directory-restricted sandbox.
-    All file operations are confined to the sandbox directory.
+    Acts as the primary coordinator delegating to modular FileTools, LinterTools,
+    ProcessTools, AssetTools, InteractionTools, and Specialized Subagents.
     """
 
-    def __init__(self, sandbox_dir: str | Path, event_callback: Callable[[dict], None] = None):
+    def __init__(self, sandbox_dir: str | Path, event_callback: Optional[Callable[[dict], None]] = None):
         """
         Initialize the tool registry for a specific sandbox directory.
-        
+
         Args:
             sandbox_dir: The directory where all commands and file operations will be constrained.
             event_callback: Optional callback to emit asynchronous events (e.g., preview_ready).
         """
         self.sandbox_path = Path(sandbox_dir).resolve()
-        
+
         # Ensure the path is safely under the projects root
         if PROJECTS_ROOT not in self.sandbox_path.parents and self.sandbox_path != PROJECTS_ROOT:
-             raise ValueError(f"Security Error: Project path {self.sandbox_path} is not under {PROJECTS_ROOT}")
+            raise ValueError(f"Security Error: Project path {self.sandbox_path} is not under {PROJECTS_ROOT}")
 
         # Ensure the sandbox directory exists
         self.sandbox_path.mkdir(parents=True, exist_ok=True)
         self.event_callback = event_callback
-        
-        # Maps pid -> { "process": Popen, "command": str, "log_filename": str, "port": int | None }
-        self.background_processes: Dict[int, Dict[str, Any]] = {}
+
+        # Initialize modular tool handlers
+        self.file_tools = FileTools(
+            sandbox_path=self.sandbox_path,
+            is_safe_path_fn=self._is_safe_path,
+            event_callback=self.event_callback,
+        )
+        self.linter_tools = LinterTools(
+            sandbox_path=self.sandbox_path,
+            is_safe_path_fn=self._is_safe_path,
+        )
+        self.process_tools = ProcessTools(
+            sandbox_path=self.sandbox_path,
+            event_callback=self.event_callback,
+        )
+        self.asset_tools = AssetTools(
+            sandbox_path=self.sandbox_path,
+        )
+        self.interaction_tools = InteractionTools(
+            event_callback=self.event_callback,
+        )
+        self.design_subagent = DesignSubagent(
+            sandbox_path=self.sandbox_path,
+            tool_registry=self,
+            event_callback=self.event_callback,
+        )
+        self.troubleshoot_subagent = TroubleshootSubagent(
+            sandbox_path=self.sandbox_path,
+            tool_registry=self,
+            event_callback=self.event_callback,
+        )
+        self.vision_subagent = VisionExpertSubagent(
+            sandbox_path=self.sandbox_path,
+            tool_registry=self,
+            event_callback=self.event_callback,
+        )
+        self.ui_testing_subagent = UITestingSubagent(
+            sandbox_path=self.sandbox_path,
+            tool_registry=self,
+            event_callback=self.event_callback,
+        )
+
+    def get_subagent(self, name: str) -> Optional[Any]:
+        """Resolves subagent instance by tool name or alias."""
+        if name in ["invoke_design_agent", "design_agent", "design_subagent"]:
+            return self.design_subagent
+        if name in ["invoke_troubleshoot_agent", "troubleshoot_agent", "troubleshoot_subagent"]:
+            return self.troubleshoot_subagent
+        if name in ["invoke_vision_agent", "vision_agent", "vision_subagent"]:
+            return self.vision_subagent
+        if name in ["test_ui", "testing_agent", "ui_testing_subagent"]:
+            return self.ui_testing_subagent
+        return None
 
     def _is_safe_path(self, file_path: str) -> bool:
         """Verify the path is within the sandbox directory."""
@@ -44,34 +100,47 @@ class ToolRegistry:
         except Exception:
             return False
 
-    def _find_free_port(self) -> int:
-        """Find an available port on the host."""
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(('', 0))
-            return s.getsockname()[1]
+    @property
+    def background_processes(self) -> Dict[int, Dict[str, Any]]:
+        """Direct access to active background processes mapping."""
+        return self.process_tools.background_processes
 
-    def _is_command_safe(self, command: str) -> str | None:
-        """
-        Check if a command is blacklisted.
-        Returns an error message if blacklisted, or None if safe.
-        """
-        cmd_lower = command.lower()
-        blacklist = ["sudo ", "rm -rf", "chmod 777", "curl ", "wget ", "npm -g", "npm install -g", "../"]
-        for bad in blacklist:
-            if bad in cmd_lower:
-                return f"Error: Command rejected due to security policy (contains '{bad}')."
-        return None
+    # ─────────────────────────────────────────────────────────────
+    # Tool Registration & Dispatch Mapping
+    # ─────────────────────────────────────────────────────────────
 
     def get_tools(self) -> Dict[str, Callable]:
         """Returns a mapping of tool name -> callable for dynamic dispatch."""
         return {
+            # File Tools
             "read_file": self.read_file,
+            "view_bulk": self.view_bulk,
+            "glob_files": self.glob_files,
+            "grep_search": self.grep_search,
             "write_file": self.write_file,
+            "write_files": self.write_files,
             "edit_file": self.edit_file,
+            "insert_text": self.insert_text,
             "list_directory": self.list_directory,
+            # Linter Tools
+            "lint_javascript": self.lint_javascript,
+            # Media & Asset Tools
+            "get_assets": self.get_assets,
+            "get_assets_tool": self.get_assets,
+            # Interaction & Lifecycle Tools
+            "ask_human": self.ask_human,
+            "finish": self.finish,
+            # Process & Dev Server Tools
             "execute_command": self.execute_command,
             "run_background_command": self.run_background_command,
             "stop_background_command": self.stop_background_command,
+            # Specialized Subagents
+            "invoke_design_agent": self.invoke_design_agent,
+            "design_agent": self.invoke_design_agent,
+            "invoke_troubleshoot_agent": self.invoke_troubleshoot_agent,
+            "troubleshoot_agent": self.invoke_troubleshoot_agent,
+            "invoke_vision_agent": self.invoke_vision_agent,
+            "vision_agent": self.invoke_vision_agent,
             "test_ui": self.test_ui,
         }
 
@@ -81,296 +150,150 @@ class ToolRegistry:
         """
         return [
             self.read_file,
+            self.view_bulk,
+            self.glob_files,
+            self.grep_search,
             self.write_file,
+            self.write_files,
             self.edit_file,
+            self.insert_text,
             self.list_directory,
+            self.lint_javascript,
+            self.get_assets,
+            self.ask_human,
+            self.finish,
+            self.invoke_design_agent,
+            self.invoke_troubleshoot_agent,
+            self.invoke_vision_agent,
             self.execute_command,
             self.run_background_command,
             self.stop_background_command,
             self.test_ui,
         ]
 
-    def read_file(self, file_path: str) -> str:
-        """Read the contents of a file.
+    # ─────────────────────────────────────────────────────────────
+    # Delegated File Operations
+    # ─────────────────────────────────────────────────────────────
 
-        Args:
-            file_path: The relative path to the file to read.
+    def read_file(self, file_path: str, start_line: int = 1, end_line: int = None) -> str:
+        return self.file_tools.read_file(file_path=file_path, start_line=start_line, end_line=end_line)
 
-        Returns:
-            The contents of the file as a string.
-        """
-        if not self._is_safe_path(file_path):
-            return f"Error: Access denied to path outside sandbox: {file_path}"
+    def view_bulk(self, files: Any = None, **kwargs) -> str:
+        return self.file_tools.view_bulk(files=files, **kwargs)
 
-        target = self.sandbox_path / file_path
-        if not target.exists():
-            return f"Error: File not found: {file_path}"
+    def glob_files(self, pattern: str, path: str = ".") -> str:
+        return self.file_tools.glob_files(pattern=pattern, path=path)
 
-        try:
-            with open(target, "r") as f:
-                return f.read()
-        except Exception as e:
-            return f"Error reading file: {str(e)}"
+    def grep_search(self, query: str, path: str = ".", case_sensitive: bool = False) -> str:
+        return self.file_tools.grep_search(query=query, path=path, case_sensitive=case_sensitive)
 
     def write_file(self, file_path: str, content: str) -> str:
-        """Write content to a file, creating it and any parent directories if they don't exist.
+        return self.file_tools.write_file(file_path=file_path, content=content)
 
-        Args:
-            file_path: The relative path to the file to write.
-            content: The full content to write to the file.
+    def write_files(self, files: Any = None, **kwargs) -> str:
+        return self.file_tools.write_files(files=files, **kwargs)
 
-        Returns:
-            A success or error message.
-        """
-        if not self._is_safe_path(file_path):
-            return f"Error: Access denied to path outside sandbox: {file_path}"
+    def insert_text(self, file_path: str, line_number: int, text: str) -> str:
+        return self.file_tools.insert_text(file_path=file_path, line_number=line_number, text=text)
 
-        target = self.sandbox_path / file_path
-        try:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            with open(target, "w") as f:
-                f.write(content)
-            return f"Successfully wrote to {file_path}"
-        except Exception as e:
-            return f"Error writing file: {str(e)}"
-
-    def edit_file(self, file_path: str, old_text: str, new_text: str) -> str:
-        """Edit a file by replacing a specific text occurrence with new text.
-
-        Args:
-            file_path: The relative path to the file to edit.
-            old_text: The exact text to find and replace.
-            new_text: The text to replace it with.
-
-        Returns:
-            A success or error message.
-        """
-        if not self._is_safe_path(file_path):
-            return f"Error: Access denied to path outside sandbox: {file_path}"
-
-        target = self.sandbox_path / file_path
-        if not target.exists():
-            return f"Error: File not found: {file_path}"
-
-        try:
-            content = target.read_text()
-            if old_text not in content:
-                return (
-                    f"Error: The specified old_text was not found in {file_path}. "
-                    f"Please use read_file('{file_path}') to see the exact current contents, "
-                    f"or use write_file('{file_path}', content) to rewrite the file."
-                )
-
-            updated = content.replace(old_text, new_text, 1)
-            target.write_text(updated)
-            return f"Successfully edited {file_path}"
-        except Exception as e:
-            return f"Error editing file: {str(e)}"
+    def edit_file(self, file_path: str, old_text: str, new_text: str, replace_all: bool = False) -> str:
+        return self.file_tools.edit_file(file_path=file_path, old_text=old_text, new_text=new_text, replace_all=replace_all)
 
     def list_directory(self, path: str = ".") -> str:
-        """List the contents of a directory, showing files and subdirectories.
+        return self.file_tools.list_directory(path=path)
 
-        Args:
-            path: The relative path to the directory to list. Defaults to the sandbox root.
+    # ─────────────────────────────────────────────────────────────
+    # Delegated Linter Operations
+    # ─────────────────────────────────────────────────────────────
 
-        Returns:
-            A formatted listing of directory contents.
-        """
-        if not self._is_safe_path(path):
-            return f"Error: Access denied to path outside sandbox: {path}"
+    def lint_javascript(self, file_path: str = ".") -> str:
+        return self.linter_tools.lint_javascript(file_path=file_path)
 
-        target = (self.sandbox_path / path).resolve()
-        if not target.exists():
-            return f"Error: Directory not found: {path}"
-        if not target.is_dir():
-            return f"Error: {path} is not a directory"
+    # ─────────────────────────────────────────────────────────────
+    # Delegated Media & Asset Operations
+    # ─────────────────────────────────────────────────────────────
 
-        try:
-            entries = []
-            for item in sorted(target.iterdir()):
-                rel = item.relative_to(self.sandbox_path)
-                if item.is_dir():
-                    entries.append(f"  [DIR]  {rel}/")
-                else:
-                    size = item.stat().st_size
-                    entries.append(f"  [FILE] {rel} ({size} bytes)")
+    def get_assets(self, query: str = "", category: str = "", count: int = 5) -> str:
+        return self.asset_tools.get_assets(query=query, category=category, count=count)
 
-            if not entries:
-                return f"Directory '{path}' is empty."
+    # ─────────────────────────────────────────────────────────────
+    # Delegated Interaction & Lifecycle Operations
+    # ─────────────────────────────────────────────────────────────
 
-            return f"Contents of '{path}':\n" + "\n".join(entries)
-        except Exception as e:
-            return f"Error listing directory: {str(e)}"
+    def ask_human(self, question: str, options: Optional[List[str]] = None) -> str:
+        return self.interaction_tools.ask_human(question=question, options=options)
+
+    def finish(self, summary: str, next_steps: Optional[str] = None) -> str:
+        return self.interaction_tools.finish(summary=summary, next_steps=next_steps)
+
+    # ─────────────────────────────────────────────────────────────
+    # Delegated Process & Dev Server Operations
+    # ─────────────────────────────────────────────────────────────
 
     def execute_command(self, command: str, reason: str = "") -> str:
-        """Execute a shell command in the sandbox directory.
+        return self.process_tools.execute_command(command=command, reason=reason)
 
-        Args:
-            command: The shell command to execute.
-            reason: Explanation of why this command needs to run.
-
-        Returns:
-            The command output (stdout on success, stderr on failure).
-        """
-        cmd_clean = command.strip()
-        
-        # Blacklist check
-        err = self._is_command_safe(cmd_clean)
-        if err:
-            return err
-            
-        if cmd_clean.startswith("cd ") or cmd_clean == "cd":
-            return (
-                "Note: Standalone 'cd' command executed, but shell directory state does NOT persist "
-                "across separate tool calls. All tool calls execute relative to the project root. "
-                "To write files in subdirectories, specify relative paths in write_file (e.g. 'folder/file.py') "
-                "or combine commands with '&&' (e.g. 'cd folder && python script.py')."
-            )
-
-        try:
-            result = subprocess.run(
-                command,
-                shell=True,
-                cwd=str(self.sandbox_path),
-                capture_output=True,
-                text=True,
-                timeout=300,
-            )
-            output = result.stdout if result.returncode == 0 else result.stderr
-            if not output.strip():
-                return f"Command completed with exit code {result.returncode} (no output)"
-            
-            if result.returncode != 0:
-                return f"[Command failed with exit code {result.returncode}]\n{output}"
-            return output
-        except subprocess.TimeoutExpired:
-            return "Error: Command timed out after 300 seconds"
-        except Exception as e:
-            return f"Error executing command: {str(e)}"
+    def start_dev_server(self, command: str = "npm run dev", log_filename: str = "server.log", restart: bool = False) -> Dict[str, Any]:
+        return self.process_tools.start_dev_server(command=command, log_filename=log_filename, restart=restart)
 
     def run_background_command(self, command: str, reason: str = "", log_filename: str = "server.log") -> str:
-        """Execute a shell command in the background (useful for starting web servers).
-        
-        Args:
-            command: The shell command to execute in the background.
-            reason: Explanation of why this command needs to run in the background.
-            log_filename: The name of the log file to append output to (default: server.log).
-            
-        Returns:
-            A message indicating the process started with its PID.
-        """
-        # Blacklist check
-        err = self._is_command_safe(command)
-        if err:
-            return err
+        return self.process_tools.run_background_command(command=command, reason=reason, log_filename=log_filename)
 
-        # Check if the exact command is already running
-        for pid, info in list(self.background_processes.items()):
-            if info["command"] == command and info["process"].poll() is None:
-                existing_log = info["log_filename"]
-                return f"Command is already running in the background with PID {pid}. Logs are in '{existing_log}'."
-
-        port = self._find_free_port()
-        # Inject port into command if possible. Assumes standard dev server flags.
-        # E.g. 'npm run dev' -> 'npm run dev -- --port 12345'
-        # E.g. 'python -m http.server' -> 'python -m http.server 12345'
-        if "npm run" in command or "npx" in command or "vite" in command or "next" in command:
-            cmd_with_port = f"{command} -- --port {port}" if "npm run" in command else f"{command} --port {port}"
-        elif "python" in command and "http.server" in command:
-            cmd_with_port = f"{command} {port}"
-        else:
-            # Fallback if we don't know how to pass the port, just set PORT env var
-            cmd_with_port = command
-
-        try:
-            log_path = self.sandbox_path / log_filename
-            log_file = open(log_path, "a")  # Append instead of overwrite
-            
-            env = os.environ.copy()
-            env["PORT"] = str(port)
-
-            process = subprocess.Popen(
-                cmd_with_port,
-                shell=True,
-                cwd=self.sandbox_path,
-                stdout=log_file,
-                stderr=subprocess.STDOUT,
-                env=env,
-                preexec_fn=os.setsid  # Start in a new process group
-            )
-            
-            self.background_processes[process.pid] = {
-                "process": process,
-                "command": command,
-                "log_filename": log_filename,
-                "port": port
-            }
-            
-            # Emit preview ready event
-            if self.event_callback:
-                self.event_callback({
-                    "type": "preview_ready",
-                    "port": port,
-                    "url": f"http://localhost:{port}"
-                })
-                
-            return f"Started background process with PID {process.pid} on port {port}. Logs are being written to '{log_filename}'. Use read_file to check its output."
-        except Exception as e:
-            return f"Error starting background command: {str(e)}"
-            
     def stop_background_command(self, pid: int) -> str:
-        """Stop a running background command by its PID.
-        
-        Args:
-            pid: The process ID to stop.
-            
-        Returns:
-            A success or error message.
-        """
-        info = self.background_processes.get(pid)
-        if not info:
-            return f"Error: No background process found with PID {pid}."
-            
-        try:
-            os.killpg(os.getpgid(info["process"].pid), signal.SIGTERM)
-            del self.background_processes[pid]
-            if self.event_callback:
-                self.event_callback({"type": "preview_stopped"})
-            return f"Successfully stopped background process with PID {pid}."
-        except Exception as e:
-            return f"Error terminating process {pid}: {str(e)}"
+        return self.process_tools.stop_background_command(pid=pid)
 
     def get_active_processes(self) -> List[Dict[str, Any]]:
-        """Returns a list of currently active background processes."""
-        active = []
-        for pid, info in list(self.background_processes.items()):
-            if info["process"].poll() is None:
-                active.append({
-                    "pid": pid,
-                    "command": info["command"],
-                    "log_filename": info["log_filename"],
-                    "port": info.get("port")
-                })
-        return active
+        return self.process_tools.get_active_processes()
 
     def cleanup(self):
-        """Kill all tracked background processes."""
-        for pid, info in list(self.background_processes.items()):
-            try:
-                info["process"].terminate()
-            except Exception:
-                pass
-        self.background_processes.clear()
+        self.process_tools.cleanup()
+
+    # ─────────────────────────────────────────────────────────────
+    # Delegated Subagent Operations
+    # ─────────────────────────────────────────────────────────────
+
+    def invoke_design_agent(
+        self,
+        problem_statement: str,
+        app_type: str = "saas_app",
+        theme_preference: str = "",
+        auto_apply_css: bool = True,
+    ) -> str:
+        """Invoke the specialized Design Subagent to generate cohesive UI/UX tokens, Google Font pairings, and layout blueprints."""
+        return self.design_subagent.generate_layout_blueprint(
+            problem_statement=problem_statement,
+            app_type=app_type,
+            theme_preference=theme_preference,
+            auto_apply_css=auto_apply_css,
+        )
+
+    def invoke_troubleshoot_agent(
+        self,
+        error_log: str,
+        context_file: str = "",
+        recent_actions: str = "",
+    ) -> str:
+        """Invoke the specialized Troubleshoot Subagent to perform root-cause analysis and generate actionable fixes."""
+        return self.troubleshoot_subagent.diagnose_error(
+            error_log=error_log,
+            context_file=context_file,
+            recent_actions=recent_actions,
+        )
+
+    def invoke_vision_agent(
+        self,
+        target_component_or_file: str = "",
+        screenshot_base64: str = "",
+        design_intent: str = "",
+    ) -> str:
+        """Invoke the specialized Vision Expert Subagent to audit UI layout balance, color contrast, and micro-interactions."""
+        return self.vision_subagent.critique_ui(
+            target_component_or_file=target_component_or_file,
+            screenshot_base64=screenshot_base64,
+            design_intent=design_intent,
+        )
 
     def test_ui(self, url: str, instructions: str) -> str:
-        """Run an automated UI testing subagent to verify the functionality of a webpage.
-        
-        Args:
-            url: The URL to test (e.g., 'http://localhost:5000').
-            instructions: What the subagent should test (e.g., 'Add a todo item and check if it appears').
-            
-        Returns:
-            A detailed report from the subagent on what it tested and the results.
-        """
-        subagent = UITestingSubagent()
-        return subagent.run_ui_test(url, instructions)
+        """Run an automated UI testing subagent to verify the functionality of a webpage."""
+        return self.ui_testing_subagent.run_ui_test(url, instructions)
+

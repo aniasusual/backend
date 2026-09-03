@@ -33,6 +33,7 @@ class ProjectInfo:
 
     name: str
     path: Path
+    template: str = "node_react"
     status: str = "stopped"         # "running" | "stopped"
     port: Optional[int] = None
     pid: Optional[int] = None
@@ -44,6 +45,7 @@ class ProjectInfo:
         return {
             "name": self.name,
             "path": str(self.path),
+            "template": self.template,
             "status": self.status,
             "port": self.port,
             "pid": self.pid,
@@ -56,6 +58,7 @@ class ProjectInfo:
         meta_path = self.path / META_FILENAME
         meta = {
             "name": self.name,
+            "template": self.template,
             "created_at": self.created_at,
             "last_opened": self.last_opened,
             "pid": self.pid,
@@ -83,6 +86,7 @@ class ProjectInfo:
         return cls(
             name=meta.get("name", project_dir.name),
             path=project_dir,
+            template=meta.get("template", "node_react"),
             created_at=meta.get("created_at", ""),
             last_opened=meta.get("last_opened", ""),
             pid=meta.get("pid"),

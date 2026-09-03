@@ -1,0 +1,49 @@
+apiVersion: agents.v1
+kind: Agent
+metadata:
+  id: qwen2.5_coder_14b_32b
+  name: Qwen 2.5 Coder 14B-32B Workstation Agent
+  version: 1
+  description: "High-accuracy multi-subagent orchestration for large coder models."
+  tags: [workstation, 14b, 32b, local]
+
+spec:
+  tier: 2
+  context_window: 64000
+  max_iterations: 50
+  prompt_id: "intermediate_14b_agent"
+  is_reasoning_model: false
+  strip_think_tags: false
+  text_fallback_parser: true
+
+  whitelisted_tools:
+    - glob_files
+    - view_bulk
+    - read_file
+    - write_file
+    - write_files
+    - edit_file
+    - insert_text
+    - grep_search
+    - list_directory
+    - lint_javascript
+    - get_assets
+    - ask_human
+    - finish
+    - execute_command
+    - run_background_command
+    - stop_background_command
+
+  enabled_subagents:
+    - invoke_design_agent
+    - invoke_troubleshoot_agent
+    - invoke_vision_agent
+    - test_ui
+
+  target_models:
+    - "qwen2.5-coder:14b"
+    - "qwen2.5-coder:32b"
+    - "codellama:13b"
+    - "starcoder2:15b"
+    - "deepseek-coder:14b"
+    - "codellama:34b"
