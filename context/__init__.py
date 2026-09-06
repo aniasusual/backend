@@ -15,6 +15,7 @@ from context.config import (
     RECENCY_ANCHOR_DEFAULT,
     RECENCY_ANCHOR_CONFIRMATION,
     RECENCY_ANCHOR_ERROR,
+    RECENCY_ANCHOR_CONVERSATIONAL,
 )
 from context.estimator import TokenEstimator
 from context.squasher import ContextSquasher
@@ -30,4 +31,6 @@ __all__ = [
     "RECENCY_ANCHOR_DEFAULT",
     "RECENCY_ANCHOR_CONFIRMATION",
     "RECENCY_ANCHOR_ERROR",
+    "RECENCY_ANCHOR_CONVERSATIONAL",
 ]
+

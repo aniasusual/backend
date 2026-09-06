@@ -7,6 +7,7 @@ Orchestrates in-loop squashing, inter-turn preparation, and macro-compaction.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Dict, List, Optional
 
 from context.config import (
@@ -14,7 +15,9 @@ from context.config import (
     RECENCY_ANCHOR_DEFAULT,
     RECENCY_ANCHOR_CONFIRMATION,
     RECENCY_ANCHOR_ERROR,
+    RECENCY_ANCHOR_CONVERSATIONAL,
 )
+
 from context.estimator import TokenEstimator
 from context.squasher import ContextSquasher
 from context.compactor import ContextCompactor
@@ -91,10 +94,16 @@ class ContextManager:
                 continue
 
             elif role == "user":
+                # Fallback tool executions append messages as {"role": "user", "content": "[Tool Result for '...']: ..."}
+                # These are execution outputs from tools, NOT human user prompts.
+                if isinstance(content, str) and content.startswith("[Tool Result"):
+                    continue
+
                 if current_user:
                     _finalize_turn()
                 clean_user = content.split("\n\n[Instruction:")[0].strip()
                 current_user = clean_user
+
 
             elif role == "assistant":
                 if content:
@@ -118,14 +127,16 @@ class ContextManager:
                                 if opts and isinstance(opts, list):
                                     q_str += f" (Options: {', '.join(str(o) for o in opts)})"
                                 asked_questions.append(q_str)
-                        elif fn_name in ["invoke_design_agent", "design_agent"]:
+                        elif fn_name == "invoke_design_agent":
                             invoked_actions.append("Applied design system tokens to src/index.css")
-                        elif fn_name in ["invoke_troubleshoot_agent", "troubleshoot_agent"]:
+                        elif fn_name == "invoke_troubleshoot_agent":
                             invoked_actions.append("Diagnosed runtime issue with Troubleshoot subagent")
-                        elif fn_name in ["invoke_vision_agent", "vision_agent"]:
+                        elif fn_name == "invoke_vision_agent":
                             invoked_actions.append("Audited UI design polish with Vision subagent")
-                        elif fn_name in ["test_ui", "testing_agent", "ui_testing_subagent"]:
+                        elif fn_name == "invoke_testing_agent":
                             invoked_actions.append("Ran automated UI verification tests")
+                        elif fn_name == "invoke_code_reviewer_agent":
+                            invoked_actions.append("Audited code quality, security, and React/Express architecture")
                         elif fn_name.startswith("invoke_"):
                             subagent_title = fn_name.replace("invoke_", "").replace("_", " ").title()
                             invoked_actions.append(f"Executed {subagent_title} subagent")
@@ -183,20 +194,52 @@ class ContextManager:
 
         # 3. Determine targeted recency anchor
         clean_prompt_lower = user_prompt.strip().lower()
-        is_confirmation = clean_prompt_lower in [
-            "yes", "y", "sure", "ok", "okay", "continue", "please continue", "proceed", "go ahead", "start", "do it"
-        ]
+        confirmation_tokens = {
+            "yes", "y", "sure", "ok", "okay", "continue", "please continue",
+            "proceed", "go ahead", "start", "do it", "approved", "confirm"
+        }
+        is_confirmation = clean_prompt_lower in confirmation_tokens
         last_turn_had_question = bool(
             compacted_history and "Question asked:" in compacted_history[-1].get("content", "")
         )
-        is_error = any(kw in clean_prompt_lower for kw in ["error", "fail", "failed", "crash", "syntaxerror", "exception"])
 
-        if is_confirmation or last_turn_had_question:
+        # Word boundary matching for errors and exceptions
+        error_pattern = r"\b(error|errors|fail|failed|failure|crash|crashed|syntaxerror|typeerror|referenceerror|exception)\b"
+        negation_pattern = r"\b(no|without|zero|not an?|never)\s+(error|errors|fail|failure|crash|exception)\b"
+        has_error_mention = bool(re.search(error_pattern, clean_prompt_lower))
+        is_negated_error = bool(re.search(negation_pattern, clean_prompt_lower))
+        is_error = has_error_mention and not is_negated_error
+
+        # Detect informational / conversational questions vs active code-writing actions
+        action_keywords = [
+            "build", "create", "make", "add", "implement", "fix", "update", "delete",
+            "remove", "install", "run", "write", "change", "style", "refactor", "generate"
+        ]
+        is_action_request = any(kw in clean_prompt_lower for kw in action_keywords)
+
+        conversational_prefixes = [
+            "what", "why", "who", "where", "when", "how", "can you explain", "explain",
+            "tell me", "which", "list", "describe", "do you know", "do you remember"
+        ]
+        is_conversational = (
+            any(clean_prompt_lower.startswith(prefix) for prefix in conversational_prefixes)
+            or clean_prompt_lower.endswith("?")
+        )
+
+        # Precedence:
+        # 1. User confirmation or answer to an ask_human question
+        # 2. Informational Q&A (even if the word 'error' is mentioned in an educational query)
+        # 3. Actionable error or crash report requiring repair
+        # 4. Default disk-first action anchor
+        if is_confirmation or (last_turn_had_question and not is_action_request and not is_conversational):
             anchor = RECENCY_ANCHOR_CONFIRMATION
+        elif is_conversational and not is_action_request:
+            anchor = RECENCY_ANCHOR_CONVERSATIONAL
         elif is_error:
             anchor = RECENCY_ANCHOR_ERROR
         else:
             anchor = RECENCY_ANCHOR_DEFAULT
+
 
         anchored_user_prompt = f"{user_prompt.strip()}{anchor}"
         existing_messages.append({"role": "user", "content": anchored_user_prompt})

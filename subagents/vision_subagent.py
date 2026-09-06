@@ -1,24 +1,39 @@
-import re
-from pathlib import Path
-from typing import Dict, Any, Optional, List
+"""
+Autonomous Vision & UI/UX Aesthetic Expert Subagent.
+Inspired by Emergent's design_reviewer_gemini_3_pro and vision_expert_agent_sonnet_4.
+Operates as an autonomous child loop using SubagentRunner with scoped tools:
+{"read_file", "grep_search", "view_bulk", "get_assets"}.
+Evaluates layout balance, dark mode contrast, Google Font pairings, responsive grid breakpoints,
+detects unstyled raw HTML elements, and curates CDN assets.
+"""
 
+import logging
+from pathlib import Path
+from typing import Dict, Any, Optional, Set
+
+from config.settings import DEFAULT_MODEL_ID
 from subagents.base import BaseSubagent
+from subagents.runner import SubagentRunner
+from subagents.vision import VISION_EXPERT_SYSTEM_PROMPT, StaticVisionAnalyzer
+
+logger = logging.getLogger(__name__)
 
 
 class VisionExpertSubagent(BaseSubagent):
     """
-    Specialized Vision & UI Aesthetic Critique Subagent.
-    Inspired by Emergent's vision_expert_agent_sonnet_4.
-    Evaluates visual hierarchy, color contrast ratios, spacing consistency,
-    typography scales, and responsive design polish.
+    Autonomous Aesthetic & UI/UX Vision Expert Subagent.
+    Inspired by Emergent's visual_evaluation_subagent / design critique loop.
+    Audits visual hierarchy, color contrast ratios, spacing consistency,
+    Google Font pairings, responsive grid breakpoints, and asset curation.
     """
 
     def __init__(
         self,
         sandbox_path: Optional[Path] = None,
-        model_name: str = "qwen2.5-coder:7b",
+        model_name: str = DEFAULT_MODEL_ID,
         tool_registry: Optional[Any] = None,
         event_callback: Optional[Any] = None,
+        max_iterations: int = 5,
         **kwargs,
     ):
         super().__init__(
@@ -28,7 +43,16 @@ class VisionExpertSubagent(BaseSubagent):
             event_callback=event_callback,
             **kwargs,
         )
+        self.max_iterations = max_iterations
 
+    @property
+    def allowed_tools(self) -> Set[str]:
+        """Strictly scoped tools permitted for visual design audit."""
+        return {"read_file", "grep_search", "view_bulk", "get_assets"}
+
+    @property
+    def system_prompt(self) -> str:
+        return VISION_EXPERT_SYSTEM_PROMPT
 
     def critique_ui(
         self,
@@ -37,79 +61,56 @@ class VisionExpertSubagent(BaseSubagent):
         design_intent: str = "",
     ) -> str:
         """
-        Conducts a rigorous UI/UX aesthetic audit of a component, webpage, or screenshot.
-        Returns a structured design review score and actionable polish directives.
+        Conducts an autonomous multi-turn aesthetic and design system audit.
+        Uses SubagentRunner to inspect workspace files and curate assets.
+        Falls back to deterministic StaticVisionAnalyzer if the model runner encounters errors.
         """
-        findings: List[str] = []
-        scores: Dict[str, int] = {
-            "Visual Hierarchy": 90,
-            "Color Harmony & Contrast": 90,
-            "Spacing & Layout Balance": 85,
-            "Interactive Polish": 88,
-        }
+        target_file = target_component_or_file.strip() if target_component_or_file else "src/App.jsx"
+        intent_desc = design_intent.strip() if design_intent else "Modern High-End Web Application"
 
-        # Inspect target file in sandbox if provided
-        file_content = ""
-        if target_component_or_file and self.sandbox_path:
-            target_path = self.sandbox_path / target_component_or_file
-            if target_path.exists() and target_path.is_file():
-                try:
-                    file_content = target_path.read_text(encoding="utf-8")
-                except Exception:
-                    pass
+        task_description = f"""Please conduct a rigorous UI/UX visual aesthetic audit of the application.
+Target Component/File: `{target_file}`
+Design Intent: {intent_desc}
 
-        # 1. Check for Placeholder Images / Empty Sources
-        if file_content:
-            if re.search(r"src=['\"](?:\s*|[^'\"]*(?:placeholder|picsum|dummyimage|blob:)[^'\"]*)['\"]", file_content, re.IGNORECASE):
-                findings.append("⚠️ **Placeholder Images Detected**: Replace generic placeholder URLs with verified Unsplash CDN URLs using `get_assets(query='...')`.")
-                scores["Visual Hierarchy"] -= 10
-
-            # 2. Check for missing hover / interaction states on buttons or cards
-            if "<button" in file_content and "hover:" not in file_content and "transition" not in file_content and "btn-" not in file_content:
-                findings.append("💡 **Missing Micro-Interactions**: Buttons lack hover scale or shadow glow transitions. Use `.btn-primary` or add `transition-all duration-200 hover:scale-[1.02]`.")
-                scores["Interactive Polish"] -= 8
-
-            # 3. Check for hardcoded generic colors (pure red/blue/green instead of theme tokens)
-            if re.search(r"['\"]#(?:ff0000|00ff00|0000ff|ffffff|000000)['\"]", file_content, re.IGNORECASE):
-                findings.append("🎨 **Hardcoded Raw Hex Colors**: Replace raw hex colors (`#ff0000`) with semantic theme variables (`var(--primary)`, `var(--danger)`, `var(--bg-main)`).")
-                scores["Color Harmony & Contrast"] -= 5
-
-            # 4. Check for responsive container grids
-            if "grid" in file_content and "md:grid-cols" not in file_content and "sm:grid-cols" not in file_content:
-                findings.append("📱 **Responsive Grid Adaptation**: Grid containers should specify responsive breakpoints (e.g. `className=\"grid grid-cols-1 md:grid-cols-3 gap-6\"`).")
-                scores["Spacing & Layout Balance"] -= 7
-
-        if not findings:
-            findings.append("✨ **Flawless Design Compliance**: Component adheres to glassmorphism styling, clean typography scale, and responsive layout constraints.")
-
-        overall_score = round(sum(scores.values()) / len(scores))
-
-        report = f"""# 👁️ Vision & Aesthetic Review Report
-**Design Intent**: {design_intent if design_intent else 'Modern High-End SaaS / Web Application'}
-**Target Component**: `{target_component_or_file if target_component_or_file else 'Active UI View'}`
-**Overall Visual Quality Score**: **{overall_score}/100**
-
----
-
-### 📊 Score Breakdown:
-- **Visual Hierarchy & Typography**: {scores['Visual Hierarchy']}/100
-- **Color Harmony & Contrast**: {scores['Color Harmony & Contrast']}/100
-- **Spacing & Layout Balance**: {scores['Spacing & Layout Balance']}/100
-- **Micro-Interactions & Polish**: {scores['Interactive Polish']}/100
-
----
-
-### 🔍 Aesthetic Findings & Directives:
+### Audit Directives:
+1. Inspect the design system foundation (`src/index.css` and `index.html`) using `view_bulk` to verify Google Font pairings and dark mode theme variables.
+2. Inspect `{target_file}` (and related UI components) using `read_file` or `grep_search` to evaluate:
+   - Layout balance, padding consistency, and card spacing.
+   - Dark mode contrast (WCAG AA compliance) and semantic tokens vs hardcoded hex.
+   - Responsive grid breakpoints (`sm:`, `md:`, `lg:`).
+   - Unstyled raw HTML elements (`<button>`, `<input>`, `<select>`) lacking hover/active transitions.
+3. If placeholder images (`placeholder.com`, `picsum.photos`) or icons are detected, call `get_assets(query=...)` to retrieve verified Unsplash CDN URLs and Lucide icons.
+4. Synthesize and return the final structured Vision & Aesthetic Review Report.
 """
-        for f in findings:
-            report += f"\n- {f}"
 
-        report += """
+        # ── Autonomous Child Runner Execution ────────────────────────
+        try:
+            runner = SubagentRunner(
+                name="vision_subagent",
+                system_prompt=self.system_prompt,
+                allowed_tools=self.allowed_tools,
+                model_name=self.model_name,
+                max_iterations=self.max_iterations,
+                tool_registry=self.tool_registry,
+                event_callback=self.event_callback,
+            )
+            result = runner.run(task_description)
 
----
-### 💎 Recommended Polish Actions:
-1. Ensure all card containers utilize `.glass-card` with `var(--glass-blur)` and subtle borders.
-2. Maintain consistent 1.5rem (`p-6`) internal padding on major panels and `gap-6` between grid items.
-3. Use Lucide icons with `<Icon className="w-5 h-5" />` paired with concise text labels.
-"""
-        return report
+            # Check for non-empty meaningful conclusion
+            if result and len(result.strip()) > 50 and "Vision & Aesthetic Review Report" in result:
+                return result.strip()
+            elif result and len(result.strip()) > 100 and "Overall Visual Quality Score" in result:
+                return result.strip()
+            else:
+                logger.info("[VisionExpertSubagent] Runner output incomplete, using static analyzer fallback.")
+
+        except Exception as e:
+            logger.warning(f"[VisionExpertSubagent] Autonomous runner failed: {e}. Using deterministic static fallback.")
+
+        # ── Resilient Heuristic Fallback ──────────────────────────────
+        analysis = StaticVisionAnalyzer.analyze(
+            sandbox_path=self.sandbox_path,
+            target_component_or_file=target_file,
+            design_intent=intent_desc,
+        )
+        return StaticVisionAnalyzer.generate_report(analysis, design_intent=intent_desc)

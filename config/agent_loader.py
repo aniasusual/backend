@@ -35,7 +35,8 @@ ALL_SUBAGENTS: List[str] = [
     "invoke_design_agent",
     "invoke_troubleshoot_agent",
     "invoke_vision_agent",
-    "test_ui",
+    "invoke_testing_agent",
+    "invoke_code_reviewer_agent",
 ]
 
 
@@ -65,9 +66,6 @@ class AgentProfile:
         for sa in self.enabled_subagents:
             if sa not in combined:
                 combined.append(sa)
-            short_name = sa.replace("invoke_", "")
-            if short_name not in combined:
-                combined.append(short_name)
         return combined
 
 

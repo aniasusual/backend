@@ -474,7 +474,8 @@ class FileTools:
 
                     for matched_start in reversed(matched_indices):
                         first_orig_line = content_lines[matched_start]
-                        indent = re.match(r"^\s*", first_orig_line).group(0)
+                        m = re.match(r"^\s*", first_orig_line)
+                        indent = m.group(0) if m is not None else ""
 
                         formatted_replacement = [
                             indent + l if l.strip() else l for l in new_replacement_lines

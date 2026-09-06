@@ -244,12 +244,16 @@ async def websocket_endpoint(websocket: WebSocket):
     async def run_harness_task(prompt: str, harness_name: str, model_name: Optional[str] = None):
         try:
             harness = harness_manager.get_harness(harness_name)
+            active_model = model_name or DEFAULT_MODEL_ID
+            if hasattr(active_registry, "set_model_name"):
+                active_registry.set_model_name(active_model)
+
             context = {
                 "registry": active_registry,
                 "messages": session_messages,
                 "request_approval": request_approval,
                 "project": active_project,
-                "model": model_name or DEFAULT_MODEL_ID,
+                "model": active_model,
             }
             async for update in harness.process_prompt(prompt, context):
                 await websocket.send_json(update)

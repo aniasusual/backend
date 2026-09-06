@@ -1,4 +1,7 @@
-from typing import AsyncGenerator, Dict, Any, List
+from typing import AsyncGenerator, Dict, Any, List, Optional
+import copy
+
+
 import asyncio
 import uuid
 from datetime import datetime, timezone
@@ -42,6 +45,10 @@ class CodingHarness(BaseHarness):
 
         model_name = context.get("model", self.model_name)
 
+        # Synchronize active model across tool registry and all child subagents
+        if hasattr(registry, "set_model_name"):
+            registry.set_model_name(model_name)
+
         # Resolve model-specific AgentProfile from YAML specs
         profile = AgentLoader.get_profile_for_model(model_name)
         callable_tools = profile.all_callable_tools
@@ -53,9 +60,9 @@ class CodingHarness(BaseHarness):
         # Primary system prompt dynamically resolved for the active model profile
         system_prompt = get_system_prompt_for_profile(profile.prompt_id)
 
-        # Append reasoning fallback guide for thinking/reasoning models (DeepSeek-R1)
-        if profile.is_reasoning_model:
-            system_prompt = f"{system_prompt}\n\n{REASONING_MODEL_TOOL_FALLBACK}"
+        # # Append reasoning fallback guide for thinking/reasoning models (DeepSeek-R1)
+        # if profile.is_reasoning_model:
+        #     system_prompt = f"{system_prompt}\n\n{REASONING_MODEL_TOOL_FALLBACK}"
 
         # Retrieve or initialize persistent message history
         messages: List[Dict[str, Any]] = context.get("messages", [])
@@ -80,9 +87,12 @@ class CodingHarness(BaseHarness):
         try:
             client = ollama.AsyncClient()
 
-            for _ in range(profile.max_iterations):
+            for iteration_idx in range(profile.max_iterations):
                 # Tier 1 in-loop squashing: prune older tool outputs before next model turn
                 ContextManager.maybe_squash(messages, model_name=model_name)
+
+                # Snapshot the exact messages sent to the model for this iteration (deep copy for 100% wire fidelity)
+                messages_sent_snapshot = copy.deepcopy(messages)
 
                 stream = await client.chat(
                     model=model_name,
@@ -114,11 +124,13 @@ class CodingHarness(BaseHarness):
                         for evt in dispatcher.handle_content(chunk.message.content):
                             yield evt
 
+                raw_thinking_str = "".join(accumulated_thinking).strip() if accumulated_thinking else ""
+
                 # Flush any thinking into turn_ui_events
                 if accumulated_thinking:
                     turn_ui_events.append({
                         "type": "thinking",
-                        "content": "".join(accumulated_thinking).strip(),
+                        "content": raw_thinking_str,
                         "collapsed": True,
                     })
                     accumulated_thinking = []
@@ -133,6 +145,29 @@ class CodingHarness(BaseHarness):
                     ]
                 else:
                     raw_tool_calls = dispatcher.extract_fallback_tools()
+
+                # Build the complete, transparent debug payload for this iteration
+                debug_payload = {
+                    "iteration": iteration_idx + 1,
+                    "model": model_name,
+                    "messages_sent": messages_sent_snapshot,
+                    "llm_response": {
+                        "content": assistant_content,
+                        "thinking": raw_thinking_str,
+                        "tool_calls": raw_tool_calls,
+                    },
+                }
+
+                # Attach initial debug payload to user prompt turn if it's the first iteration
+                if iteration_idx == 0 and turn_ui_events:
+                    turn_ui_events[0]["debug"] = debug_payload
+
+                # Yield real-time debug event for frontend inspector
+                yield {
+                    "type": "llm_debug",
+                    "iteration": iteration_idx + 1,
+                    "debug": debug_payload,
+                }
 
                 # Normalize arguments so they are always valid dictionaries (never raw lists)
                 tool_calls: List[Dict[str, Any]] = []
@@ -153,6 +188,7 @@ class CodingHarness(BaseHarness):
                         turn_ui_events.append({
                             "type": "token",
                             "content": clean_content.strip(),
+                            "debug": debug_payload,
                         })
                     turn_ui_events.append({"type": "status", "content": "Done"})
                     self._persist_turn(
@@ -186,7 +222,9 @@ class CodingHarness(BaseHarness):
 
                 # Execute all requested tools
                 has_terminal_tool = any(isinstance(tc, dict) and tc.get("name") in ["finish", "ask_human"] for tc in tool_calls)
-                async for event in self._execute_tool_calls(tool_calls, tool_map, messages, context, is_native_tool_call):
+                async for event in self._execute_tool_calls(
+                    tool_calls, tool_map, messages, context, is_native_tool_call, debug_payload=debug_payload
+                ):
                     turn_ui_events.append(dict(event))
                     yield event
 
@@ -241,19 +279,25 @@ class CodingHarness(BaseHarness):
         messages: List[Dict[str, Any]],
         context: Dict[str, Any],
         is_native_tool_call: bool = True,
+        debug_payload: Optional[Dict[str, Any]] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """Executes a list of tool calls, yields frontend events, and updates conversation history."""
         request_approval = context.get("request_approval")
 
-        for tool_call in tool_calls:
+        for idx, tool_call in enumerate(tool_calls):
             func_name = tool_call.get("name", "")
             func_args = tool_call.get("arguments", {})
 
-            yield {
+            evt = {
                 "type": "tool_call",
                 "name": func_name,
                 "arguments": func_args,
             }
+            if debug_payload and idx == 0:
+                evt["debug"] = debug_payload
+
+            yield evt
+
 
             if func_name in ["execute_command", "run_background_command"] and request_approval:
                 command = func_args.get("command", "")
@@ -291,7 +335,7 @@ class CodingHarness(BaseHarness):
             else:
                 next_prompt_guidance = (
                     "Design system applied! Now proceed to write the Express API in server/index.js and React UI in src/App.jsx using write_file or write_files. Do NOT call finish yet!"
-                    if func_name in ["invoke_design_agent", "design_agent"]
+                    if func_name == "invoke_design_agent"
                     else "Tool execution completed. Please proceed with the next step in the engineering lifecycle."
                 )
                 messages.append({

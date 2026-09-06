@@ -161,11 +161,13 @@ class TestContextManager(unittest.TestCase):
         self.assertEqual(assistant_turn["role"], "assistant")
         self.assertIn("Question asked: Do you want dark mode? (Options: Yes, No)", assistant_turn["content"])
 
-        # Latest user prompt must have the confirmation anchor
+        # Latest user prompt must have the confirmation anchor (and no hardcoded project paths)
         latest_user = res[3]
         self.assertEqual(latest_user["role"], "user")
         self.assertIn("yes", latest_user["content"])
         self.assertIn("You now have the user's response/confirmation", latest_user["content"])
+        self.assertNotIn("server/index.js", latest_user["content"])
+        self.assertNotIn("src/App.jsx", latest_user["content"])
 
     def test_prepare_messages_error_handling(self):
         existing = [{"role": "user", "content": "Initial prompt"}]
@@ -173,6 +175,23 @@ class TestContextManager(unittest.TestCase):
 
         latest_user = res[-1]
         self.assertIn("An error or bug was reported", latest_user["content"])
+
+    def test_prepare_messages_conversational_with_error_mention(self):
+        existing = [{"role": "user", "content": "Initial prompt"}]
+        # Educational / informational question that happens to mention "errors"
+        res = ContextManager.prepare_messages("can you explain how errors are handled in App.jsx?", "System Prompt", existing)
+
+        latest_user = res[-1]
+        self.assertEqual(latest_user["role"], "user")
+        self.assertIn("Do NOT invoke file-writing, editing, or terminal tools", latest_user["content"])
+        self.assertNotIn("An error or bug was reported", latest_user["content"])
+
+    def test_prepare_messages_negated_error_handling(self):
+        existing = [{"role": "user", "content": "Initial prompt"}]
+        res = ContextManager.prepare_messages("there is no error, everything works cleanly", "System Prompt", existing)
+
+        latest_user = res[-1]
+        self.assertNotIn("An error or bug was reported", latest_user["content"])
 
     def test_maybe_squash_in_loop(self):
         messages = [
@@ -202,6 +221,43 @@ class TestContextManager(unittest.TestCase):
         self.assertNotIn("[truncated", messages[8]["content"])
         self.assertNotIn("[truncated", messages[10]["content"])
 
+    def test_compact_prior_turns_ignores_fallback_tool_results(self):
+        # Conversation containing fallback tool outputs with role="user"
+        existing = [
+            {"role": "user", "content": "build me a notes app"},
+            {"role": "assistant", "content": '{"name": "write_file", "arguments": {"file_path": "src/App.jsx"}}'},
+            {"role": "user", "content": "[Tool Result for 'write_file']:\nFile written successfully.\n\nPlease proceed."},
+            {"role": "assistant", "content": '{"name": "finish", "arguments": {"summary": "Completed"}}'},
+            {"role": "user", "content": "[Tool Result for 'finish']:\n🎉 [Task Completed Successfully]\n\nPlease proceed."},
+        ]
+
+        compacted = ContextManager.compact_prior_turns(existing)
+        # Compacted history should have exactly 1 turn pair: User ("build me a notes app") + Assistant summary
+        self.assertEqual(len(compacted), 2)
+        self.assertEqual(compacted[0]["role"], "user")
+        self.assertEqual(compacted[0]["content"], "build me a notes app")
+        self.assertEqual(compacted[1]["role"], "assistant")
+        self.assertNotIn("[Tool Result", compacted[0]["content"])
+
+    def test_prepare_messages_conversational_handling(self):
+        existing = [{"role": "user", "content": "Initial prompt"}]
+        res = ContextManager.prepare_messages("what were my last two messages to you??", "System Prompt", existing)
+
+        latest_user = res[-1]
+        self.assertEqual(latest_user["role"], "user")
+        self.assertIn("Do NOT invoke file-writing, editing, or terminal tools", latest_user["content"])
+
+    def test_prepare_messages_action_request_gets_default_anchor(self):
+        existing = [{"role": "user", "content": "Initial prompt"}]
+        # Question that requests an action
+        res = ContextManager.prepare_messages("can you add a delete button?", "System Prompt", existing)
+
+        latest_user = res[-1]
+        self.assertEqual(latest_user["role"], "user")
+        self.assertIn("Directly execute tools (write_files, edit_file, read_file", latest_user["content"])
+
 
 if __name__ == "__main__":
     unittest.main()
+
+

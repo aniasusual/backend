@@ -1,142 +1,32 @@
+"""
+Autonomous UI/UX Design Subagent.
+Synthesizes user problem statements and explicit aesthetic preferences into bespoke,
+production-grade design systems into `src/index.css` and feature-driven component blueprints.
+Detects and strictly preserves existing styling frameworks (e.g. Tailwind CSS).
+"""
+
+import logging
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Set
 
+from config.settings import DEFAULT_MODEL_ID
 from subagents.base import BaseSubagent
+from subagents.runner import SubagentRunner
+from subagents.design import (
+    DESIGN_SYSTEM_PROMPT,
+    detect_tailwind,
+    parse_user_taste,
+    generate_design_system_css,
+    detect_archetype,
+    format_topology_blueprint,
+)
 
-
-# Curated, aesthetically stunning design palettes inspired by award-winning web design
-# Each theme provides cohesive HSL variables, shadows, glassmorphism tokens, and Google Fonts.
-THEME_PALETTES: Dict[str, Dict[str, Any]] = {
-    "dark_glass_indigo": {
-        "name": "Dark Glassmorphism Indigo",
-        "font_heading": "Outfit, sans-serif",
-        "font_body": "Inter, sans-serif",
-        "google_fonts_url": "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap",
-        "colors": {
-            "--bg-main": "#090d16",
-            "--bg-surface": "rgba(17, 24, 39, 0.75)",
-            "--bg-card": "rgba(30, 41, 59, 0.55)",
-            "--bg-card-hover": "rgba(51, 65, 85, 0.65)",
-            "--border-subtle": "rgba(255, 255, 255, 0.08)",
-            "--border-glow": "rgba(99, 102, 241, 0.35)",
-            "--primary": "#6366f1",
-            "--primary-hover": "#4f46e5",
-            "--primary-glow": "rgba(99, 102, 241, 0.25)",
-            "--accent": "#06b6d4",
-            "--accent-glow": "rgba(6, 182, 212, 0.25)",
-            "--success": "#10b981",
-            "--warning": "#f59e0b",
-            "--danger": "#ef4444",
-            "--text-primary": "#f8fafc",
-            "--text-secondary": "#94a3b8",
-            "--text-muted": "#64748b",
-            "--glass-blur": "16px",
-            "--radius-sm": "8px",
-            "--radius-md": "12px",
-            "--radius-lg": "20px",
-            "--shadow-card": "0 8px 32px 0 rgba(0, 0, 0, 0.37)",
-            "--shadow-glow": "0 0 25px rgba(99, 102, 241, 0.3)",
-        },
-    },
-    "emerald_fintech": {
-        "name": "Emerald Wealth & Fintech",
-        "font_heading": "Plus Jakarta Sans, sans-serif",
-        "font_body": "Inter, sans-serif",
-        "google_fonts_url": "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap",
-        "colors": {
-            "--bg-main": "#06130d",
-            "--bg-surface": "rgba(10, 31, 22, 0.75)",
-            "--bg-card": "rgba(16, 48, 35, 0.5)",
-            "--bg-card-hover": "rgba(24, 71, 52, 0.6)",
-            "--border-subtle": "rgba(16, 185, 129, 0.15)",
-            "--border-glow": "rgba(16, 185, 129, 0.4)",
-            "--primary": "#10b981",
-            "--primary-hover": "#059669",
-            "--primary-glow": "rgba(16, 185, 129, 0.3)",
-            "--accent": "#34d399",
-            "--accent-glow": "rgba(52, 211, 153, 0.25)",
-            "--success": "#10b981",
-            "--warning": "#f59e0b",
-            "--danger": "#f43f5e",
-            "--text-primary": "#f0fdf4",
-            "--text-secondary": "#a7f3d0",
-            "--text-muted": "#6ee7b7",
-            "--glass-blur": "14px",
-            "--radius-sm": "8px",
-            "--radius-md": "14px",
-            "--radius-lg": "24px",
-            "--shadow-card": "0 12px 35px -5px rgba(6, 78, 59, 0.3)",
-            "--shadow-glow": "0 0 25px rgba(16, 185, 129, 0.35)",
-        },
-    },
-    "violet_cyberpunk": {
-        "name": "Violet Neon Cyberpunk",
-        "font_heading": "Space Grotesk, sans-serif",
-        "font_body": "Inter, sans-serif",
-        "google_fonts_url": "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap",
-        "colors": {
-            "--bg-main": "#0d0618",
-            "--bg-surface": "rgba(24, 11, 43, 0.75)",
-            "--bg-card": "rgba(42, 19, 77, 0.55)",
-            "--bg-card-hover": "rgba(63, 29, 115, 0.65)",
-            "--border-subtle": "rgba(168, 85, 247, 0.2)",
-            "--border-glow": "rgba(236, 72, 153, 0.4)",
-            "--primary": "#a855f7",
-            "--primary-hover": "#9333ea",
-            "--primary-glow": "rgba(168, 85, 247, 0.35)",
-            "--accent": "#ec4899",
-            "--accent-glow": "rgba(236, 72, 153, 0.35)",
-            "--success": "#10b981",
-            "--warning": "#eab308",
-            "--danger": "#ef4444",
-            "--text-primary": "#faf5ff",
-            "--text-secondary": "#e9d5ff",
-            "--text-muted": "#c084fc",
-            "--glass-blur": "18px",
-            "--radius-sm": "6px",
-            "--radius-md": "12px",
-            "--radius-lg": "18px",
-            "--shadow-card": "0 8px 30px rgba(168, 85, 247, 0.2)",
-            "--shadow-glow": "0 0 30px rgba(236, 72, 153, 0.4)",
-        },
-    },
-    "minimal_clean_slate": {
-        "name": "Clean Modern Minimalist",
-        "font_heading": "Inter, sans-serif",
-        "font_body": "Inter, sans-serif",
-        "google_fonts_url": "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap",
-        "colors": {
-            "--bg-main": "#0f172a",
-            "--bg-surface": "rgba(30, 41, 59, 0.8)",
-            "--bg-card": "rgba(51, 65, 85, 0.4)",
-            "--bg-card-hover": "rgba(71, 85, 105, 0.5)",
-            "--border-subtle": "rgba(255, 255, 255, 0.1)",
-            "--border-glow": "rgba(56, 189, 248, 0.3)",
-            "--primary": "#38bdf8",
-            "--primary-hover": "#0284c7",
-            "--primary-glow": "rgba(56, 189, 248, 0.2)",
-            "--accent": "#f43f5e",
-            "--accent-glow": "rgba(244, 63, 94, 0.2)",
-            "--success": "#22c55e",
-            "--warning": "#f59e0b",
-            "--danger": "#ef4444",
-            "--text-primary": "#f8fafc",
-            "--text-secondary": "#cbd5e1",
-            "--text-muted": "#94a3b8",
-            "--glass-blur": "12px",
-            "--radius-sm": "6px",
-            "--radius-md": "10px",
-            "--radius-lg": "16px",
-            "--shadow-card": "0 4px 20px rgba(0, 0, 0, 0.25)",
-            "--shadow-glow": "0 0 20px rgba(56, 189, 248, 0.25)",
-        },
-    },
-}
+logger = logging.getLogger(__name__)
 
 
 class DesignSubagent(BaseSubagent):
     """
-    Specialized Design Subagent (inspired by Emergent's design_agent_v1).
+    Autonomous Design Subagent (inspired by Emergent's design_agent_v1).
     Synthesizes problem statements into tailored, production-ready CSS design systems,
     Google Font pairings, dark mode glassmorphism tokens, and responsive UI layout blueprints.
     """
@@ -144,9 +34,10 @@ class DesignSubagent(BaseSubagent):
     def __init__(
         self,
         sandbox_path: Optional[Path] = None,
-        model_name: str = "qwen2.5-coder:7b",
+        model_name: str = DEFAULT_MODEL_ID,
         tool_registry: Optional[Any] = None,
         event_callback: Optional[Any] = None,
+        max_iterations: int = 4,
         **kwargs,
     ):
         super().__init__(
@@ -156,195 +47,16 @@ class DesignSubagent(BaseSubagent):
             event_callback=event_callback,
             **kwargs,
         )
+        self.max_iterations = max_iterations
 
+    @property
+    def allowed_tools(self) -> Set[str]:
+        """Tools permitted for the autonomous design child loop."""
+        return {"write_file", "get_assets", "read_file", "view_bulk"}
 
-    def select_theme_for_domain(self, problem_statement: str, app_type: str = "", theme_preference: str = "") -> Dict[str, Any]:
-        """Determines the most visually appropriate theme based on user preferences and application domain."""
-        combined_text = f"{problem_statement} {app_type} {theme_preference}".lower()
-
-        if any(w in combined_text for w in ["finance", "crypto", "trading", "wealth", "money", "invest", "stock", "bank", "emerald"]):
-            return THEME_PALETTES["emerald_fintech"]
-        elif any(w in combined_text for w in ["cyberpunk", "gaming", "neon", "violet", "purple", "party", "music", "night", "futuristic"]):
-            return THEME_PALETTES["violet_cyberpunk"]
-        elif any(w in combined_text for w in ["minimal", "clean", "slate", "document", "notes", "blog", "portfolio", "simple"]):
-            return THEME_PALETTES["minimal_clean_slate"]
-        else:
-            return THEME_PALETTES["dark_glass_indigo"]
-
-    def generate_index_css(self, theme: Dict[str, Any]) -> str:
-        """Generates a complete, production-grade index.css file with CSS variables and utility classes."""
-        css_vars = "\n".join(f"  {k}: {v};" for k, v in theme["colors"].items())
-        google_font_import = f"@import url('{theme['google_fonts_url']}');"
-
-        return f"""/* ==========================================================================
-   LOWKEY DESIGN SYSTEM — {theme['name']}
-   Generated by DesignSubagent
-   ========================================================================== */
-
-{google_font_import}
-
-:root {{
-  font-family: {theme['font_body']};
-  color-scheme: dark;
-  line-height: 1.5;
-  font-weight: 400;
-
-  /* Theme Tokens */
-{css_vars}
-}}
-
-* {{
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-}}
-
-body {{
-  background-color: var(--bg-main);
-  color: var(--text-primary);
-  font-family: {theme['font_body']};
-  min-height: 100vh;
-  overflow-x: hidden;
-  background-image: 
-    radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.12) 0px, transparent 50%),
-    radial-gradient(at 100% 100%, rgba(6, 182, 212, 0.1) 0px, transparent 50%);
-  background-attachment: fixed;
-}}
-
-h1, h2, h3, h4, h5, h6 {{
-  font-family: {theme['font_heading']};
-  color: var(--text-primary);
-  font-weight: 700;
-  letter-spacing: -0.025em;
-}}
-
-/* ==========================================================================
-   Glassmorphism & Card Utility Classes
-   ========================================================================== */
-
-.glass-panel {{
-  background: var(--bg-surface);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-card);
-}}
-
-.glass-card {{
-  background: var(--bg-card);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-card);
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-}}
-
-.glass-card:hover {{
-  background: var(--bg-card-hover);
-  border-color: var(--border-glow);
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-glow), var(--shadow-card);
-}}
-
-/* ==========================================================================
-   Button & Interactive Tokens
-   ========================================================================== */
-
-.btn-primary {{
-  background: linear-gradient(135deg, var(--primary), var(--primary-hover));
-  color: #ffffff;
-  padding: 0.625rem 1.25rem;
-  border-radius: var(--radius-sm);
-  font-weight: 600;
-  border: none;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  transition: all 0.2s ease;
-  box-shadow: 0 4px 14px var(--primary-glow);
-}}
-
-.btn-primary:hover {{
-  transform: translateY(-1px);
-  box-shadow: 0 6px 20px var(--primary-glow);
-}}
-
-.btn-secondary {{
-  background: var(--bg-card);
-  color: var(--text-primary);
-  padding: 0.625rem 1.25rem;
-  border-radius: var(--radius-sm);
-  font-weight: 500;
-  border: 1px solid var(--border-subtle);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  transition: all 0.2s ease;
-}}
-
-.btn-secondary:hover {{
-  background: var(--bg-card-hover);
-  border-color: var(--border-glow);
-}}
-
-/* ==========================================================================
-   Badge & Status Pills
-   ========================================================================== */
-
-.badge {{
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-  padding: 0.25rem 0.625rem;
-  border-radius: 9999px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  border: 1px solid var(--border-subtle);
-  background: var(--bg-card);
-}}
-
-.badge-success {{
-  color: var(--success);
-  border-color: rgba(16, 185, 129, 0.3);
-  background: rgba(16, 185, 129, 0.1);
-}}
-
-.badge-primary {{
-  color: var(--primary);
-  border-color: var(--border-glow);
-  background: var(--primary-glow);
-}}
-
-/* ==========================================================================
-   Input & Form Controls
-   ========================================================================== */
-
-input, textarea, select {{
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  padding: 0.625rem 0.875rem;
-  font-family: inherit;
-  font-size: 0.875rem;
-  width: 100%;
-  outline: none;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
-}}
-
-input:focus, textarea:focus, select:focus {{
-  border-color: var(--primary);
-  box-shadow: 0 0 0 3px var(--primary-glow);
-}}
-
-input::placeholder, textarea::placeholder {{
-  color: var(--text-muted);
-}}
-"""
+    @property
+    def system_prompt(self) -> str:
+        return DESIGN_SYSTEM_PROMPT
 
     def generate_layout_blueprint(
         self,
@@ -354,56 +66,113 @@ input::placeholder, textarea::placeholder {{
         auto_apply_css: bool = True,
     ) -> str:
         """
-        Synthesizes the problem statement into a comprehensive UI/UX design blueprint
-        and optionally writes the baseline design system directly into src/index.css.
+        Synthesizes the problem statement into a bespoke UI/UX design blueprint
+        via an autonomous child-loop designer, ensuring design tokens are committed
+        to src/index.css on disk while strictly preserving Tailwind directives.
         """
-        theme = self.select_theme_for_domain(problem_statement, app_type, theme_preference)
-        index_css_content = self.generate_index_css(theme)
+        is_tailwind, existing_css = detect_tailwind(self.sandbox_path)
 
-        # If sandbox_path is provided and auto_apply_css is True, apply baseline index.css
-        css_applied_msg = ""
-        if auto_apply_css and self.sandbox_path:
-            css_file = self.sandbox_path / "src" / "index.css"
+        # ── Autonomous Child-Loop Execution ─────────────────────────
+        if self.tool_registry:
+            framework_note = (
+                "Tailwind CSS is DETECTED in this project. You MUST preserve "
+                "`@tailwind base; @tailwind components; @tailwind utilities;` at the top of src/index.css "
+                "and encapsulate custom classes inside `@layer components { ... }`."
+                if is_tailwind
+                else "Vanilla CSS environment detected. Write standard modern CSS variables and utility classes."
+            )
+
+            task_prompt = f"""Design a bespoke modern UI/UX design system and component architecture for the following application:
+
+APPLICATION GOAL / PROBLEM STATEMENT:
+{problem_statement}
+
+APPLICATION TYPE:
+{app_type or 'Modern Web Application'}
+
+USER TASTE / AESTHETIC PREFERENCE:
+{theme_preference or 'Modern sleek dark mode with vibrant interactive accents'}
+
+PROJECT ENVIRONMENT:
+{framework_note}
+
+Tasks to complete:
+1. Call view_bulk(files=["package.json", "src/index.css"]) to inspect existing styles and dependencies.
+2. (Optional) Call get_assets(query="...") to find curated Unsplash image CDN URLs and Lucide icon recommendations.
+3. Call write_file(file_path="src/index.css", content="...") to write the complete bespoke design system into src/index.css (Google Fonts import, CSS variables, glassmorphic card utilities, button tokens, and strictly preserving @tailwind directives if applicable).
+4. Return the structured UI/UX component blueprint tailored directly to this application's actual features."""
+
             try:
-                css_file.parent.mkdir(parents=True, exist_ok=True)
-                css_file.write_text(index_css_content, encoding="utf-8")
-                css_applied_msg = "\n✅ **Design System Applied**: Wrote theme tokens and glassmorphism utilities to `src/index.css`."
+                runner = SubagentRunner(
+                    name="design_agent",
+                    system_prompt=self.system_prompt,
+                    allowed_tools=self.allowed_tools,
+                    model_name=self.model_name,
+                    max_iterations=self.max_iterations,
+                    tool_registry=self.tool_registry,
+                    event_callback=self.event_callback,
+                )
+                report = runner.run(task_prompt)
+                if (
+                    report
+                    and not report.startswith("Error:")
+                    and not report.startswith("Subagent execution failed")
+                    and "UI/UX Design System Blueprint" in report
+                    and len(report.strip()) >= 50
+                ):
+                    # Guarantee src/index.css exists on disk even if model forgot to call write_file
+                    if auto_apply_css and self.sandbox_path:
+                        self._ensure_baseline_css_on_disk(problem_statement, theme_preference)
+                    return report
+                else:
+                    logger.info("[DesignSubagent] Runner output incomplete or failed, using heuristic fallback.")
             except Exception as e:
-                css_applied_msg = f"\n⚠️ Note: Could not auto-write to `src/index.css`: {str(e)}"
+                logger.warning(f"DesignSubagent autonomous runner failed, using heuristic fallback: {e}")
 
-        # Generate Component Blueprint Outline
-        blueprint_report = f"""# 🎨 UI/UX Design System Blueprint
-**Theme Selected**: {theme['name']}
-**Typography**: Heading: `{theme['font_heading']}` | Body: `{theme['font_body']}`
-**Color Palette**: Primary: `{theme['colors']['--primary']}` | Accent: `{theme['colors']['--accent']}` | Background: `{theme['colors']['--bg-main']}`
-{css_applied_msg}
+        # ── Deterministic Heuristic Fallback ────────────────────────
+        return self._heuristic_fallback(
+            problem_statement=problem_statement,
+            app_type=app_type,
+            theme_preference=theme_preference,
+            auto_apply_css=auto_apply_css,
+        )
 
----
+    def _ensure_baseline_css_on_disk(self, problem_statement: str, theme_preference: str = "") -> None:
+        """Guarantees src/index.css is present on disk with valid design tokens without wiping Tailwind."""
+        if not self.sandbox_path:
+            return
 
-## 🏛️ Recommended Application Layout Structure:
+        is_tailwind, existing_css = detect_tailwind(self.sandbox_path)
+        css_file = self.sandbox_path / "src" / "index.css"
 
-### 1. Header / Navigation (`src/components/Navbar.jsx`)
-- **Brand Logo & Title**: Modern icon (`<LayoutDashboard />` or domain icon) with gradient text heading.
-- **Global Search Bar**: Glassmorphic input field with shortcut badge (`⌘K`).
-- **Quick Action Controls**: Primary Action CTA (`btn-primary`), Notification bell pill, User Avatar image.
+        # If file missing or too small or lacks essential variables, generate it
+        current_content = css_file.read_text(encoding="utf-8", errors="ignore").strip() if css_file.exists() else ""
+        if not css_file.exists() or len(current_content) < 50 or "--primary" not in current_content:
+            css_file.parent.mkdir(parents=True, exist_ok=True)
+            theme = parse_user_taste(problem_statement, theme_preference)
+            content = generate_design_system_css(theme, is_tailwind=is_tailwind, existing_css=existing_css)
+            css_file.write_text(content, encoding="utf-8")
 
-### 2. Hero & Real-Time Stats Grid (`src/components/StatsGrid.jsx` or Hero View)
-- **Top Metrics Row**: 3–4 `.glass-card` metric cards displaying key counts/metrics with Lucide status badges (`badge-success` with `<TrendingUp />`).
-- **Interactive Visual**: Main data visual, charts, or interactive canvas with subtle glow shadow (`--shadow-glow`).
+    def _heuristic_fallback(
+        self,
+        problem_statement: str,
+        app_type: str = "saas_app",
+        theme_preference: str = "",
+        auto_apply_css: bool = True,
+    ) -> str:
+        """Feature-driven deterministic fallback synthesizing tailored design tokens and architecture."""
+        is_tailwind, existing_css = detect_tailwind(self.sandbox_path)
 
-### 3. Interactive Main Core (`src/components/MainView.jsx`)
-- **Action Toolbar**: Filter pills, category selectors, and search filters.
-- **Content Cards / Table**: Responsive CSS Grid (1 col on mobile, 2–3 cols on desktop) displaying items with hover elevation.
-- **Empty & Loading States**: Clean empty state with icon and "Create New" CTA when zero records are present.
+        if auto_apply_css and self.sandbox_path:
+            self._ensure_baseline_css_on_disk(problem_statement, theme_preference)
 
-### 4. Micro-Interactions & Visual Polish Directives:
-- **Hover Transitions**: Use `.glass-card` for cards to give a smooth `-2px` float and border glow on hover.
-- **Images**: Use `get_assets(query='...')` to fetch verified Unsplash CDN URLs instead of static gray placeholders.
-- **Icons**: Import all icons from `lucide-react`.
+        theme = parse_user_taste(problem_statement, theme_preference)
+        archetype = detect_archetype(problem_statement, app_type)
 
----
-### 💡 Next Mandatory Step for Agent:
-✅ Theme tokens and styles have been applied to `src/index.css`.
-👉 NOW PROCEED TO IMPLEMENT CODE: Write the Express API routes in `server/index.js` and the React UI components in `src/App.jsx` using `write_file` or `write_files`. Do NOT call `finish` until all application code is fully written!
-"""
-        return blueprint_report
+        return format_topology_blueprint(
+            archetype=archetype,
+            theme=theme,
+            problem_statement=problem_statement,
+            app_type=app_type,
+            is_tailwind=is_tailwind,
+        )

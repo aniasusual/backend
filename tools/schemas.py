@@ -5,7 +5,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "read_file",
-            "description": "Read the contents of a file with line numbers, optionally sliced by a line range.",
+            "description": "Read the contents of a file with line numbers, optionally sliced by a line range. Use this before edit_file to inspect exact lines and surrounding code context.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -30,13 +30,13 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "view_bulk",
-            "description": "View the contents of multiple files in a single batched operation. Ideal for exploring and reading multiple components in 1 turn.",
+            "description": "View the contents of multiple files in a single batched operation. Ideal for exploring package.json, server/index.js, and src/App.jsx in 1 turn without multiple calls.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "files": {
                         "type": "array",
-                        "description": "List of relative file paths to view in bulk (e.g. ['src/App.jsx', 'server/index.js']).",
+                        "description": "List of relative file paths to view in bulk (e.g. ['src/App.jsx', 'server/index.js', 'package.json']).",
                         "items": {
                             "type": "string",
                         },
@@ -71,7 +71,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "grep_search",
-            "description": "Search for a keyword or regex pattern across workspace files. Returns matching lines and line numbers (~20 tokens).",
+            "description": "Search for a keyword or regex pattern across workspace files. Returns matching lines and line numbers.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -92,7 +92,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "write_file",
-            "description": "Write content to a single file, creating it and any parent directories if they don't exist.",
+            "description": "Write content to a single file, creating it and any parent directories if they don't exist. Ideal for creating new modular components (e.g. 'src/components/Header.jsx') or utility files.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -113,7 +113,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "write_files",
-            "description": "Write content to multiple files in a single atomic batch operation. Ideal for generating fullstack apps and multiple components in 1 turn.",
+            "description": "Write content to multiple files in a single atomic batch operation. RECOMMENDED for initial application builds to write both 'server/index.js' (Express backend) and 'src/App.jsx' (React frontend) in 1 turn.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -169,7 +169,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "edit_file",
-            "description": "Edit a file by replacing a specific code snippet with new text (whitespace and indentation tolerant). Supports replace_all for global symbol renames.",
+            "description": "Edit a file by replacing a specific code snippet with new text. Indentation and whitespace tolerant. Include 2-3 lines of surrounding code context in 'old_text' to guarantee a unique match. Supports replace_all for global symbol renames.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -179,7 +179,7 @@ TOOL_SCHEMAS = [
                     },
                     "old_text": {
                         "type": "string",
-                        "description": "The code snippet to find and replace.",
+                        "description": "The code snippet to find and replace. Include surrounding lines for unique context.",
                     },
                     "new_text": {
                         "type": "string",
@@ -215,7 +215,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "lint_javascript",
-            "description": "Run a static syntax and import validation check on JavaScript/JSX/TypeScript files to verify code correctness before testing.",
+            "description": "Run a static syntax and import validation check on JavaScript/JSX/TypeScript files. Call this before finish to verify zero syntax errors or broken imports in your code.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -232,7 +232,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "get_assets",
-            "description": "Fetch verified, working Unsplash CDN image URLs, local project media, and Lucide React icon names to build rich UI without broken links or placeholders.",
+            "description": "Fetch verified, working Unsplash CDN image URLs and recommended Lucide icon names tailored to your app topic (e.g. 'avatar', 'tech hero', 'crypto', 'food', 'sneakers'). Use this to populate rich UI images without broken links.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -257,7 +257,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "ask_human",
-            "description": "Ask the human user a clarifying question ONLY when requirements are fundamentally ambiguous between mutually exclusive options. NEVER call this tool to ask for permission to start, proceed, or write code. You have full autonomous authority to write and modify files directly.",
+            "description": "Ask the human user a clarifying question ONLY when functional requirements are fundamentally ambiguous between mutually exclusive options. NEVER call this tool to ask for permission to start, proceed, or write code. You have full autonomous authority to write and modify files directly.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -281,7 +281,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "finish",
-            "description": "Call ONLY when all application code files (src/App.jsx, server/index.js, etc.) have been completely written, implemented, and verified on disk. NEVER call finish immediately after invoke_design_agent or before writing the actual React and Express code.",
+            "description": "Call ONLY when the application features have been completely implemented and verified on disk (server/index.js and src/App.jsx written and linted). Concludes the task with a summary of built features.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -302,7 +302,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "invoke_design_agent",
-            "description": "Invoke the specialized UI/UX Design Subagent to generate award-winning design systems, color tokens, Google Font typography scales, and component blueprints.",
+            "description": "OPTIONAL: Invoke the specialized UI/UX Design Subagent to generate a brand new CSS design system in 'src/index.css' and component architecture blueprint. Use ONLY when the user explicitly requests a complete design system or theme overhaul from scratch. Does NOT write src/App.jsx or server/index.js.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -327,7 +327,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "invoke_troubleshoot_agent",
-            "description": "Invoke the specialized Troubleshoot Subagent to perform deep root cause analysis (RCA) on error logs, stack traces, Vite build failures, and crashes.",
+            "description": "Invoke the specialized Troubleshoot Subagent to perform deep root cause analysis (RCA) on compiler output, Vite build failures, runtime exceptions, and API 500 errors, returning exact surgical fix patches.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -352,7 +352,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "invoke_vision_agent",
-            "description": "Invoke the specialized Vision Expert Subagent to audit UI layout balance, visual hierarchy, color contrast ratios, and micro-interactions.",
+            "description": "Invoke the specialized Vision Expert Subagent to audit UI layout balance, visual hierarchy, color contrast ratios (WCAG AA), and curate missing visual assets.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -376,13 +376,13 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "execute_command",
-            "description": "Execute a short-lived shell command in the project directory.",
+            "description": "Execute a shell command in the project directory. Use this to install ANY needed npm packages (e.g. 'npm install recharts framer-motion canvas-confetti axios') before importing them, or run build/audit scripts.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "command": {
                         "type": "string",
-                        "description": "The shell command to execute.",
+                        "description": "The shell command to execute (e.g. 'npm install recharts', 'npm ls').",
                     },
                     "reason": {
                         "type": "string",
@@ -397,7 +397,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "run_background_command",
-            "description": "Run a long-running process (such as a web server or dev server) in the background.",
+            "description": "Run a long-running process in the background. Note: The main fullstack dev server is already running automatically in the background; only use this for custom auxiliary background tasks.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -438,22 +438,44 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
-            "name": "test_ui",
-            "description": "Run an automated UI testing subagent on a URL to verify interactive functionality.",
+            "name": "invoke_testing_agent",
+            "description": "Invoke the specialized UI & Browser Testing Subagent to autonomously drive a headless browser, click buttons, fill forms, and verify interactive workflows.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "url": {
                         "type": "string",
-                        "description": "The URL to test (e.g. 'http://localhost:5000').",
+                        "description": "The local application URL to test (e.g. 'http://localhost:5173').",
                     },
                     "instructions": {
                         "type": "string",
-                        "description": "Detailed plain-text instructions on what to test.",
+                        "description": "Detailed plain-text instructions on what user flows, buttons, and views to test.",
                     },
                 },
                 "required": ["url", "instructions"],
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "invoke_code_reviewer_agent",
+            "description": "Invoke the specialized Senior Staff Code Reviewer Subagent to audit code correctness, OWASP security vulnerabilities, Express async route error handling, and React performance.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target_files": {
+                        "type": "string",
+                        "description": "Optional comma-separated list of relative file paths to inspect (e.g. 'src/App.jsx, server/index.js'). If empty, automatically discovers and audits all source code files across src/ and server/.",
+                    },
+                    "focus_areas": {
+                        "type": "string",
+                        "description": "Optional specific focus areas to audit (e.g. 'security, error handling, state mutations, performance').",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
 ]
+

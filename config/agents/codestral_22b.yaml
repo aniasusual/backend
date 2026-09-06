@@ -38,7 +38,8 @@ spec:
     - invoke_design_agent
     - invoke_troubleshoot_agent
     - invoke_vision_agent
-    - test_ui
+    - invoke_testing_agent
+    - invoke_code_reviewer_agent
 
   target_models:
     - "codestral:22b"

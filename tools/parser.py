@@ -14,19 +14,16 @@ KNOWN_TOOLS = {
     "list_directory",
     "lint_javascript",
     "get_assets",
-    "get_assets_tool",
     "ask_human",
     "finish",
     "invoke_design_agent",
-    "design_agent",
     "invoke_troubleshoot_agent",
-    "troubleshoot_agent",
     "invoke_vision_agent",
-    "vision_agent",
+    "invoke_testing_agent",
+    "invoke_code_reviewer_agent",
     "execute_command",
     "run_background_command",
     "stop_background_command",
-    "test_ui",
 }
 
 

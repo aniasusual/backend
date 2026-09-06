@@ -51,14 +51,16 @@ class ContextCompactor:
                             except Exception:
                                 args = {}
 
-                        if fn_name in ["invoke_design_agent", "design_agent"]:
+                        if fn_name == "invoke_design_agent":
                             completed_actions.append("Initialized UI/UX design tokens in src/index.css")
-                        elif fn_name in ["invoke_troubleshoot_agent", "troubleshoot_agent"]:
+                        elif fn_name == "invoke_troubleshoot_agent":
                             completed_actions.append("Diagnosed and resolved runtime errors")
-                        elif fn_name in ["invoke_vision_agent", "vision_agent"]:
+                        elif fn_name == "invoke_vision_agent":
                             completed_actions.append("Performed UI layout & aesthetic audit")
-                        elif fn_name in ["test_ui", "testing_agent", "ui_testing_subagent"]:
+                        elif fn_name == "invoke_testing_agent":
                             completed_actions.append("Ran automated browser UI tests")
+                        elif fn_name == "invoke_code_reviewer_agent":
+                            completed_actions.append("Audited code quality, security, and React/Express architecture")
                         elif fn_name.startswith("invoke_"):
                             completed_actions.append(f"Ran {fn_name.replace('invoke_', '').replace('_', ' ').title()} subagent")
                         elif fn_name in ["execute_command", "run_background_command"]:

@@ -106,7 +106,7 @@ class ToolArgumentNormalizer:
             elif "code" in args:
                 args["content"] = args.pop("code")
 
-        if name in ["get_assets", "get_assets_tool"]:
+        if name == "get_assets":
             if "query" not in args:
                 if "search_query" in args:
                     args["query"] = args.pop("search_query")
@@ -157,7 +157,7 @@ class ToolArgumentNormalizer:
                 elif "work_done" in args:
                     args["summary"] = args.pop("work_done")
 
-        if name in ["invoke_design_agent", "design_agent"]:
+        if name == "invoke_design_agent":
             if "problem_statement" not in args:
                 if "prompt" in args:
                     args["problem_statement"] = args.pop("prompt")
@@ -182,7 +182,7 @@ class ToolArgumentNormalizer:
                 elif "style" in args:
                     args["theme_preference"] = args.pop("style")
 
-        if name in ["invoke_troubleshoot_agent", "troubleshoot_agent"]:
+        if name == "invoke_troubleshoot_agent":
             if "error_log" not in args:
                 if "error" in args:
                     args["error_log"] = args.pop("error")
@@ -207,7 +207,7 @@ class ToolArgumentNormalizer:
                 elif "previous_actions" in args:
                     args["recent_actions"] = args.pop("previous_actions")
 
-        if name in ["invoke_vision_agent", "vision_agent"]:
+        if name == "invoke_vision_agent":
             if "target_component_or_file" not in args:
                 if "component" in args:
                     args["target_component_or_file"] = args.pop("component")
@@ -231,6 +231,40 @@ class ToolArgumentNormalizer:
                     args["screenshot_base64"] = args.pop("screenshot")
                 elif "image" in args:
                     args["screenshot_base64"] = args.pop("image")
+
+        if name == "invoke_testing_agent":
+            if "instructions" not in args:
+                if "instruction" in args:
+                    args["instructions"] = args.pop("instruction")
+                elif "prompt" in args:
+                    args["instructions"] = args.pop("prompt")
+                elif "test_plan" in args:
+                    args["instructions"] = args.pop("test_plan")
+            if "url" not in args:
+                if "link" in args:
+                    args["url"] = args.pop("link")
+                elif "endpoint" in args:
+                    args["url"] = args.pop("endpoint")
+
+        if name == "invoke_code_reviewer_agent":
+            if "target_files" not in args:
+                if "files" in args:
+                    args["target_files"] = args.pop("files")
+                elif "file_paths" in args:
+                    args["target_files"] = args.pop("file_paths")
+                elif "file_path" in args:
+                    args["target_files"] = args.pop("file_path")
+                elif "file" in args:
+                    args["target_files"] = args.pop("file")
+                elif "targets" in args:
+                    args["target_files"] = args.pop("targets")
+            if "focus_areas" not in args:
+                if "focus" in args:
+                    args["focus_areas"] = args.pop("focus")
+                elif "areas" in args:
+                    args["focus_areas"] = args.pop("areas")
+                elif "scope" in args:
+                    args["focus_areas"] = args.pop("scope")
 
         if name in ["execute_command", "run_background_command"] and "command" not in args:
             if "cmd" in args:

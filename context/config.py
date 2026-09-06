@@ -42,11 +42,18 @@ RECENCY_ANCHOR_DEFAULT = (
 
 RECENCY_ANCHOR_CONFIRMATION = (
     "\n\n[Instruction: You now have the user's response/confirmation. Immediately execute the appropriate write tools "
-    "(write_file or write_files) to implement the Express backend in server/index.js and React frontend in src/App.jsx. "
-    "Do NOT output conversational acknowledgements without calling write tools.]"
+    "(write_files, write_file, edit_file, or execute_command) to implement the requested changes on disk. "
+    "Do NOT output conversational acknowledgements without calling tools.]"
 )
 
 RECENCY_ANCHOR_ERROR = (
-    "\n\n[Instruction: An error or bug was reported. Immediately inspect the offending code and execute write tools "
-    "(write_file, edit_file, or insert_text) to apply the fix on disk. Do not output raw code blocks in chat.]"
+    "\n\n[Instruction: An error or bug was reported. Immediately inspect the relevant files or logs and execute tools "
+    "(edit_file, write_file, insert_text, or execute_command) to diagnose and fix the issue on disk. "
+    "Do not output raw code blocks in chat.]"
 )
+
+RECENCY_ANCHOR_CONVERSATIONAL = (
+    "\n\n[Instruction: Respond directly and accurately to the user's question or message in chat. "
+    "Do NOT invoke file-writing, editing, or terminal tools unless specifically requested by the user.]"
+)
+
