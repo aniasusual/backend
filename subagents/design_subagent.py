@@ -37,7 +37,8 @@ class DesignSubagent(BaseSubagent):
         model_name: str = DEFAULT_MODEL_ID,
         tool_registry: Optional[Any] = None,
         event_callback: Optional[Any] = None,
-        max_iterations: int = 4,
+        max_iterations: int = 40,
+        allowed_tools: Optional[Any] = None,
         **kwargs,
     ):
         super().__init__(
@@ -45,13 +46,14 @@ class DesignSubagent(BaseSubagent):
             model_name=model_name,
             tool_registry=tool_registry,
             event_callback=event_callback,
+            allowed_tools=allowed_tools,
             **kwargs,
         )
         self.max_iterations = max_iterations
 
     @property
-    def allowed_tools(self) -> Set[str]:
-        """Tools permitted for the autonomous design child loop."""
+    def default_allowed_tools(self) -> Set[str]:
+        """Default tools permitted for the autonomous design child loop."""
         return {"write_file", "get_assets", "read_file", "view_bulk"}
 
     @property
@@ -113,12 +115,13 @@ Tasks to complete:
                     event_callback=self.event_callback,
                 )
                 report = runner.run(task_prompt)
+                self.last_run_events = runner.last_run_events
+                self.last_run_metrics = runner.last_run_metrics
                 if (
                     report
                     and not report.startswith("Error:")
                     and not report.startswith("Subagent execution failed")
-                    and "UI/UX Design System Blueprint" in report
-                    and len(report.strip()) >= 50
+                    and len(report.strip()) >= 30
                 ):
                     # Guarantee src/index.css exists on disk even if model forgot to call write_file
                     if auto_apply_css and self.sandbox_path:

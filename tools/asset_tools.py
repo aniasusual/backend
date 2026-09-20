@@ -263,9 +263,10 @@ class AssetTools:
         if recommended_icons:
             pkg_name = installed_icon_pkg or "lucide-react"
             icon_names_str = ", ".join(recommended_icons[:6])
+            icon_tags = ", ".join(f"`<{icon} className='w-5 h-5' />`" for icon in recommended_icons[:6])
             output_blocks.append(
                 f"\n**Recommended Icons (`import {{ {icon_names_str} }} from '{pkg_name}'`):**\n"
-                f"- {', '.join(f'`<{icon} className=\"w-5 h-5\" />`' for icon in recommended_icons[:6])}"
+                f"- {icon_tags}"
             )
 
         return "\n".join(output_blocks)

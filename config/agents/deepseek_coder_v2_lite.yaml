@@ -1,20 +1,21 @@
 apiVersion: agents.v1
 kind: Agent
 metadata:
-  id: cloud_frontier
-  name: Cloud Frontier Orchestrator (Claude 3.7 / GPT-4o)
+  id: deepseek_coder_v2_lite
+  name: DeepSeek-Coder-V2-Lite (16B, 2.4B active) Agent
   version: 1
-  description: "Elite orchestrator for frontier cloud APIs with comprehensive subagent delegation."
-  tags: [cloud, frontier, claude, gpt]
+  description: "Mixture-of-Experts coding specialist with 2.4B active parameters and 128k context."
+  tags: [moe, 16b, 2.4b_active, deepseek]
 
 spec:
-  tier: 4
-  context_window: 200000
+  tier: 2
+  context_window: 131072
   max_iterations: 100
-  prompt_id: "workstation_32b_agent"
+  prompt_id: "intermediate_14b_agent"
   is_reasoning_model: false
   strip_think_tags: false
   text_fallback_parser: true
+  supports_native_tools: false
 
   whitelisted_tools:
     - glob_files
@@ -26,13 +27,21 @@ spec:
     - insert_text
     - grep_search
     - list_directory
+    - locate_files_by_pattern
+    - extract_signatures
+    - map_dependencies
     - lint_javascript
     - get_assets
+    - search_web
     - ask_human
     - finish
     - execute_command
     - run_background_command
     - stop_background_command
+    - mount_file
+    - unmount_file
+    - close_file
+    - list_mounted_files
 
   enabled_subagents:
     - invoke_design_agent
@@ -42,8 +51,6 @@ spec:
     - invoke_code_reviewer_agent
 
   target_models:
-    - "claude-3-7-sonnet"
-    - "claude-3-5-sonnet"
-    - "gpt-4o"
-    - "gpt-4.5-preview"
-    - "gemini-2.5-pro"
+    - "deepseek-coder-v2:16b"
+    - "deepseek-coder-v2-lite:16b"
+    - "deepseek-coder-v2"

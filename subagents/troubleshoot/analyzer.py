@@ -28,6 +28,15 @@ class StaticTroubleshootAnalyzer:
         context_snippet = ""
         if clean_file_path and sandbox_path:
             target_path = sandbox_path / clean_file_path
+            if not target_path.exists() and sandbox_path.exists():
+                name = Path(clean_file_path).name
+                matches = list(sandbox_path.glob(f"**/{name}"))
+                if matches:
+                    target_path = matches[0]
+                    try:
+                        clean_file_path = str(target_path.relative_to(sandbox_path))
+                    except Exception:
+                        pass
             if target_path.exists() and target_path.is_file():
                 try:
                     lines = target_path.read_text(encoding="utf-8", errors="replace").splitlines()

@@ -1,3 +1,4 @@
+// TEMPORARY PREVIEW PLACEHOLDER: The agent must completely overwrite this file with the real application.
 import React from 'react';
 
 export default function App() {

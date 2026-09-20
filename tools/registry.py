@@ -5,9 +5,11 @@ from typing import Dict, Any, Callable, List, Optional
 from config.settings import PROJECTS_ROOT, DEFAULT_MODEL_ID
 from tools.file_tools import FileTools
 from tools.linter_tools import LinterTools
+from tools.ast_tools import ASTTools
 from tools.process_tools import ProcessTools
 from tools.asset_tools import AssetTools
 from tools.interaction_tools import InteractionTools
+from tools.search_tools import SearchTools
 from subagents.ui_subagent import UITestingSubagent
 from subagents.design_subagent import DesignSubagent
 from subagents.troubleshoot_subagent import TroubleshootSubagent
@@ -27,6 +29,7 @@ class ToolRegistry:
         sandbox_dir: Path,
         event_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         model_name: str = DEFAULT_MODEL_ID,
+        subagent_tools: Optional[Dict[str, Any]] = None,
     ):
         """
         Initialize the tool registry for a specific sandbox directory.
@@ -35,6 +38,7 @@ class ToolRegistry:
             sandbox_dir: The directory where all commands and file operations will be constrained.
             event_callback: Optional callback to emit asynchronous events (e.g., preview_ready).
             model_name: Active model name to synchronize across all subagents.
+            subagent_tools: Optional mapping of subagent names to their allowed tools sets.
         """
         self.sandbox_path = Path(sandbox_dir).resolve()
         self.model_name = model_name
@@ -52,8 +56,13 @@ class ToolRegistry:
             sandbox_path=self.sandbox_path,
             is_safe_path_fn=self._is_safe_path,
             event_callback=self.event_callback,
+            model_name=self.model_name,
         )
         self.linter_tools = LinterTools(
+            sandbox_path=self.sandbox_path,
+            is_safe_path_fn=self._is_safe_path,
+        )
+        self.ast_tools = ASTTools(
             sandbox_path=self.sandbox_path,
             is_safe_path_fn=self._is_safe_path,
         )
@@ -67,35 +76,42 @@ class ToolRegistry:
         self.interaction_tools = InteractionTools(
             event_callback=self.event_callback,
         )
+        self.search_tools = SearchTools()
+        subagent_tools = subagent_tools or {}
         self.design_subagent = DesignSubagent(
             sandbox_path=self.sandbox_path,
             model_name=self.model_name,
             tool_registry=self,
             event_callback=self.event_callback,
+            allowed_tools=subagent_tools.get("design") or subagent_tools.get("invoke_design_agent"),
         )
         self.troubleshoot_subagent = TroubleshootSubagent(
             sandbox_path=self.sandbox_path,
             model_name=self.model_name,
             tool_registry=self,
             event_callback=self.event_callback,
+            allowed_tools=subagent_tools.get("troubleshoot") or subagent_tools.get("invoke_troubleshoot_agent"),
         )
         self.vision_subagent = VisionExpertSubagent(
             sandbox_path=self.sandbox_path,
             model_name=self.model_name,
             tool_registry=self,
             event_callback=self.event_callback,
+            allowed_tools=subagent_tools.get("vision") or subagent_tools.get("invoke_vision_agent"),
         )
         self.ui_testing_subagent = UITestingSubagent(
             sandbox_path=self.sandbox_path,
             model_name=self.model_name,
             tool_registry=self,
             event_callback=self.event_callback,
+            allowed_tools=subagent_tools.get("testing") or subagent_tools.get("invoke_testing_agent"),
         )
         self.code_reviewer_subagent = CodeReviewerSubagent(
             sandbox_path=self.sandbox_path,
             model_name=self.model_name,
             tool_registry=self,
             event_callback=self.event_callback,
+            allowed_tools=subagent_tools.get("code_reviewer") or subagent_tools.get("invoke_code_reviewer_agent"),
         )
 
     def set_model_name(self, model_name: str) -> None:
@@ -103,6 +119,8 @@ class ToolRegistry:
         if not model_name:
             return
         self.model_name = model_name
+        if hasattr(self, "file_tools"):
+            self.file_tools.model_name = model_name
         for subagent in [
             self.design_subagent,
             self.troubleshoot_subagent,
@@ -113,17 +131,23 @@ class ToolRegistry:
             if hasattr(subagent, "model_name"):
                 subagent.model_name = model_name
 
+    def configure_subagent_tools(self, subagent_name: str, allowed_tools: Any) -> None:
+        """Dynamically configures allowed tools for a specific subagent."""
+        subagent = self.get_subagent(subagent_name)
+        if subagent and hasattr(subagent, "allowed_tools"):
+            subagent.allowed_tools = allowed_tools
+
     def get_subagent(self, name: str) -> Optional[Any]:
-        """Resolves subagent instance by canonical tool name."""
-        if name == "invoke_design_agent":
+        """Resolves subagent instance by canonical tool name or alias."""
+        if name in ("invoke_design_agent", "design", "design_agent"):
             return self.design_subagent
-        if name == "invoke_troubleshoot_agent":
+        if name in ("invoke_troubleshoot_agent", "troubleshoot", "troubleshoot_agent"):
             return self.troubleshoot_subagent
-        if name == "invoke_vision_agent":
+        if name in ("invoke_vision_agent", "vision", "vision_agent"):
             return self.vision_subagent
-        if name == "invoke_testing_agent":
+        if name in ("invoke_testing_agent", "testing", "testing_agent", "ui_testing"):
             return self.ui_testing_subagent
-        if name == "invoke_code_reviewer_agent":
+        if name in ("invoke_code_reviewer_agent", "code_reviewer", "reviewer", "code_reviewer_agent"):
             return self.code_reviewer_subagent
         return None
 
@@ -139,6 +163,11 @@ class ToolRegistry:
     def background_processes(self) -> Dict[int, Dict[str, Any]]:
         """Direct access to active background processes mapping."""
         return self.process_tools.background_processes
+
+    @property
+    def mounted_virtual_ram(self) -> Dict[str, str]:
+        """Direct access to active files mounted in Dynamic Virtual RAM."""
+        return self.file_tools.mounted_virtual_ram
 
     # ─────────────────────────────────────────────────────────────
     # Tool Registration & Dispatch Mapping
@@ -157,10 +186,21 @@ class ToolRegistry:
             "edit_file": self.edit_file,
             "insert_text": self.insert_text,
             "list_directory": self.list_directory,
+            "locate_files_by_pattern": self.locate_files_by_pattern,
+            # AST & Code Mapping Tools
+            "extract_signatures": self.extract_signatures,
+            "map_dependencies": self.map_dependencies,
+            # Virtual RAM Lifecycle Tools
+            "mount_file": self.mount_file,
+            "unmount_file": self.unmount_file,
+            "close_file": self.close_file,
+            "list_mounted_files": self.list_mounted_files,
             # Linter Tools
             "lint_javascript": self.lint_javascript,
             # Media & Asset Tools
             "get_assets": self.get_assets,
+            # Web Search Tools
+            "search_web": self.search_web,
             # Interaction & Lifecycle Tools
             "ask_human": self.ask_human,
             "finish": self.finish,
@@ -190,8 +230,15 @@ class ToolRegistry:
             self.edit_file,
             self.insert_text,
             self.list_directory,
+            self.locate_files_by_pattern,
+            self.extract_signatures,
+            self.map_dependencies,
+            self.mount_file,
+            self.unmount_file,
+            self.list_mounted_files,
             self.lint_javascript,
             self.get_assets,
+            self.search_web,
             self.ask_human,
             self.finish,
             self.invoke_design_agent,
@@ -208,8 +255,34 @@ class ToolRegistry:
     # Delegated File Operations
     # ─────────────────────────────────────────────────────────────
 
-    def read_file(self, file_path: str, start_line: int = 1, end_line: int = None) -> str:
+    def extract_signatures(self, file_path: str) -> str:
+        """Extracts structural code signatures (classes, methods, functions, Express routes,
+        interfaces, exports, docstrings) from Python, JavaScript, TypeScript, or JSX files,
+        stripping interior execution bodies.
+        """
+        return self.ast_tools.extract_signatures(file_path=file_path)
+
+    def map_dependencies(self, target_file: Optional[str] = None) -> str:
+        """Maps repository import/export relationships across the workspace or analyzes
+        the architectural impact of changing a specific target file.
+        """
+        return self.ast_tools.map_dependencies(target_file=target_file)
+
+    def read_file(self, file_path: Optional[str] = None, start_line: int = 1, end_line: Optional[int] = None) -> str:
         return self.file_tools.read_file(file_path=file_path, start_line=start_line, end_line=end_line)
+
+    def mount_file(self, file_path: str, model_name: Optional[str] = None) -> str:
+        return self.file_tools.mount_file(file_path=file_path, model_name=model_name or self.model_name)
+
+    def unmount_file(self, file_path: str, **kwargs) -> str:
+        return self.file_tools.unmount_file(file_path=file_path, **kwargs)
+
+    def close_file(self, file_path: str, **kwargs) -> str:
+        """Alias for unmount_file."""
+        return self.file_tools.unmount_file(file_path=file_path, **kwargs)
+
+    def list_mounted_files(self, model_name: Optional[str] = None) -> str:
+        return self.file_tools.list_mounted_files(model_name=model_name or self.model_name)
 
     def view_bulk(self, files: Any = None, **kwargs) -> str:
         return self.file_tools.view_bulk(files=files, **kwargs)
@@ -235,12 +308,26 @@ class ToolRegistry:
     def list_directory(self, path: str = ".") -> str:
         return self.file_tools.list_directory(path=path)
 
+    def locate_files_by_pattern(self, directory: str = ".", max_depth: int = 3, pattern: str = "*") -> str:
+        return self.file_tools.locate_files_by_pattern(directory=directory, max_depth=max_depth, pattern=pattern)
+
     # ─────────────────────────────────────────────────────────────
     # Delegated Linter Operations
     # ─────────────────────────────────────────────────────────────
 
-    def lint_javascript(self, file_path: str = ".") -> str:
-        return self.linter_tools.lint_javascript(file_path=file_path)
+    def lint_javascript(
+        self,
+        file_path: Optional[str] = ".",
+        items: Optional[Any] = None,
+        files: Optional[Any] = None,
+        **kwargs: Any
+    ) -> str:
+        return self.linter_tools.lint_javascript(
+            file_path=file_path,
+            items=items,
+            files=files,
+            **kwargs
+        )
 
     # ─────────────────────────────────────────────────────────────
     # Delegated Media & Asset Operations
@@ -248,6 +335,22 @@ class ToolRegistry:
 
     def get_assets(self, query: str = "", category: str = "", count: int = 5) -> str:
         return self.asset_tools.get_assets(query=query, category=category, count=count)
+
+    # ─────────────────────────────────────────────────────────────
+    # Delegated Web Search Operations
+    # ─────────────────────────────────────────────────────────────
+
+    def search_web(self, query: str, max_results: int = 5) -> str:
+        """Search the web using DuckDuckGo for live documentation, APIs, error solutions, or technical references without API keys.
+
+        Args:
+            query: The search query to look up (e.g. 'FastAPI lifespan handlers', 'Tailwind v4 grid syntax').
+            max_results: Maximum number of search results to return (default: 5, range: 1-10).
+
+        Returns:
+            A formatted markdown summary of top web search results with titles, links, and snippets.
+        """
+        return self.search_tools.search_web(query=query, max_results=max_results)
 
     # ─────────────────────────────────────────────────────────────
     # Delegated Interaction & Lifecycle Operations
@@ -329,10 +432,43 @@ class ToolRegistry:
             design_intent=design_intent,
         )
 
-    def invoke_testing_agent(self, url: str, instructions: str) -> str:
+    def get_dev_server_info(self) -> Optional[Dict[str, Any]]:
+        """Returns metadata about the active development server."""
+        return self.process_tools.get_dev_server_info()
+
+    def get_dev_server_url(self) -> str:
+        """Gets the URL of the active development server, auto-starting it if necessary."""
+        info = self.process_tools.get_dev_server_info()
+        if info and info.get("url"):
+            return info["url"]
+        if (self.sandbox_path / "package.json").exists():
+            res = self.start_dev_server()
+            if res.get("url"):
+                return res["url"]
+        return "http://localhost:3000"
+
+    def invoke_testing_agent(self, url: str = "", instructions: str = "") -> str:
         """Invoke the specialized UI & Browser Testing Subagent to verify webpage functionality, DOM interactions, and user flows."""
         self.ui_testing_subagent.model_name = self.model_name
-        return self.ui_testing_subagent.run_ui_test(url, instructions)
+
+        # Resolve the true running dev server info
+        dev_info = self.process_tools.get_dev_server_info()
+        dev_url = dev_info.get("url") if dev_info else None
+        backend_port = str(dev_info.get("backend_port")) if dev_info else "5001"
+
+        # If url is omitted, empty, Vite default 5173, or points to the backend API port, auto-resolve
+        clean_url = (url or "").strip().rstrip("/")
+        if (
+            not clean_url
+            or clean_url == "http://localhost:5173"
+            or clean_url.endswith(f":{backend_port}")
+            or f":{backend_port}/" in clean_url
+        ):
+            resolved_url = dev_url or self.get_dev_server_url()
+        else:
+            resolved_url = clean_url
+
+        return self.ui_testing_subagent.run_ui_test(resolved_url, instructions)
 
     def invoke_code_reviewer_agent(self, target_files: str = "", focus_areas: str = "") -> str:
         """Invoke the specialized Code Reviewer Subagent to audit code correctness, security, Express routes, and React best practices."""

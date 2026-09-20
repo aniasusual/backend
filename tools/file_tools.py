@@ -1,13 +1,22 @@
 import os
 import re
+import fnmatch
 from pathlib import Path
 from typing import Dict, Any, Callable, List, Optional
+
+from config.models import get_model_context_window
+from config.settings import DEFAULT_MODEL_ID
+from context.estimator import TokenEstimator
+
+
+DEFAULT_MAX_READ_LINES = 250
 
 
 class FileTools:
     """
     Dedicated handler for safe workspace file operations (reading, globbing,
-    bulk viewing, precision search, atomic writing, line insertion, and resilient editing).
+    bulk viewing, precision search, atomic writing, line insertion, resilient editing,
+    and Dynamic Virtual RAM lifecycle management).
     """
 
     def __init__(
@@ -15,22 +24,40 @@ class FileTools:
         sandbox_path: Path,
         is_safe_path_fn: Callable[[str], bool],
         event_callback: Optional[Callable[[dict], None]] = None,
+        model_name: str = DEFAULT_MODEL_ID,
     ):
         self.sandbox_path = sandbox_path
         self._is_safe_path = is_safe_path_fn
         self.event_callback = event_callback
+        self.model_name = model_name
+        self._last_read_file: Optional[str] = None
+        self.mounted_virtual_ram: Dict[str, str] = {}
+        self.max_ram_budget_ratio: float = 0.60
 
-    def read_file(self, file_path: str, start_line: int = 1, end_line: int = None) -> str:
+    def read_file(
+        self,
+        file_path: Optional[str] = None,
+        start_line: int = 1,
+        end_line: Optional[int] = None,
+    ) -> str:
         """Read the contents of a file with line numbers, optionally sliced by line range.
+        Unbounded or oversized reads are safely clamped to 250 lines max with pagination notices.
 
         Args:
-            file_path: The relative path to the file to read.
+            file_path: The relative path to the file to read. If omitted, falls back to the last read file.
             start_line: Optional 1-indexed starting line number (default: 1).
-            end_line: Optional 1-indexed ending line number (default: end of file).
+            end_line: Optional 1-indexed ending line number (default: min(start_line + 249, end of file); max 250 lines).
 
         Returns:
-            The numbered lines of the file as a formatted string.
+            The numbered lines of the file as a formatted string, including pagination notice if clamped.
         """
+        if not file_path:
+            if self._last_read_file:
+                file_path = self._last_read_file
+            else:
+                return "Error: 'file_path' is required."
+        else:
+            file_path = str(file_path).strip()
         if not self._is_safe_path(file_path):
             return f"Error: Access denied to path outside sandbox: {file_path}"
 
@@ -46,16 +73,37 @@ class FileTools:
 
             total_lines = len(lines)
             if total_lines == 0:
+                self._last_read_file = file_path
                 return f"[{file_path} is empty (0 lines)]"
 
-            start_idx = max(1, int(start_line) if start_line is not None else 1) - 1
-            if end_line is None or int(end_line) < 0:
-                end_idx = total_lines
-            else:
-                end_idx = min(total_lines, max(start_idx + 1, int(end_line)))
-
+            try:
+                start_num = max(1, int(float(start_line)) if start_line is not None else 1)
+            except (ValueError, TypeError):
+                start_num = 1
+            start_idx = start_num - 1
             if start_idx >= total_lines:
                 return f"Error: start_line {start_line} exceeds total lines ({total_lines}) in {file_path}"
+
+            clamped = False
+            if end_line is None or (isinstance(end_line, int) and end_line < 0):
+                end_idx = min(total_lines, start_idx + DEFAULT_MAX_READ_LINES)
+                if end_idx < total_lines:
+                    clamped = True
+            else:
+                try:
+                    requested_end = int(float(end_line))
+                    if requested_end < 0:
+                        requested_end = total_lines
+                except (ValueError, TypeError):
+                    requested_end = start_idx + DEFAULT_MAX_READ_LINES
+
+                req_idx = max(start_idx + 1, requested_end)
+                if req_idx - start_idx > DEFAULT_MAX_READ_LINES:
+                    end_idx = min(total_lines, start_idx + DEFAULT_MAX_READ_LINES)
+                    clamped = True
+                else:
+                    end_idx = min(total_lines, req_idx)
+                    clamped = False
 
             selected_lines = lines[start_idx:end_idx]
             formatted = []
@@ -63,9 +111,177 @@ class FileTools:
                 formatted.append(f"{i:4d} | {line.rstrip(chr(13) + chr(10))}")
 
             header = f"[{file_path} (lines {start_idx + 1}-{end_idx} of {total_lines})]:\n"
-            return header + "\n".join(formatted)
+            output = header + "\n".join(formatted)
+
+            if clamped and end_idx < total_lines:
+                next_start = end_idx + 1
+                output += f"\n\n[Lines {start_idx + 1}-{end_idx} shown. File has {total_lines} lines. Use read_file(start_line={next_start}) to continue.]"
+
+            self._last_read_file = file_path
+            return output
         except Exception as e:
             return f"Error reading file: {str(e)}"
+
+    def _sync_virtual_ram_on_change(self, file_path: str, content: Optional[str] = None) -> None:
+        """If file_path is currently mounted in Virtual RAM, synchronizes its content."""
+        clean_path = os.path.normpath(file_path).lstrip("/").replace("\\", "/")
+        if clean_path in self.mounted_virtual_ram:
+            if content is not None:
+                self.mounted_virtual_ram[clean_path] = content
+            else:
+                target = self.sandbox_path / clean_path
+                if target.exists() and not target.is_dir():
+                    try:
+                        self.mounted_virtual_ram[clean_path] = target.read_text(encoding="utf-8", errors="replace")
+                    except Exception:
+                        pass
+                else:
+                    self.mounted_virtual_ram.pop(clean_path, None)
+
+    def mount_file(self, file_path: str, model_name: Optional[str] = None) -> str:
+        """Mounts an active workspace file into Dynamic Virtual RAM.
+        Mounted files remain pinned in working memory across all turns without repeating read_file,
+        and are automatically synchronized upon write/edit operations.
+        Strictly capped at 60% of the active model's context window.
+
+        Args:
+            file_path: Relative path to the file to mount into Virtual RAM.
+            model_name: Optional model identifier to evaluate context window limit.
+
+        Returns:
+            Confirmation of mount status, token consumption, and remaining RAM budget.
+        """
+        if not file_path:
+            return "Error: 'file_path' is required to mount a file into Virtual RAM."
+
+        clean_file_path = str(file_path).strip()
+        if not self._is_safe_path(clean_file_path):
+            return f"Error: Access denied to path outside sandbox: {clean_file_path}"
+
+        clean_path = os.path.normpath(clean_file_path).lstrip("/").replace("\\", "/")
+        target = self.sandbox_path / clean_path
+
+        if not target.exists():
+            return f"Error: File not found: {clean_file_path}"
+        if target.is_dir():
+            return f"Error: '{clean_file_path}' is a directory. Only files can be mounted into Virtual RAM."
+
+        try:
+            content = target.read_text(encoding="utf-8", errors="replace")
+        except Exception as e:
+            return f"Error reading file '{file_path}': {str(e)}"
+
+        # Compute token load
+        file_tokens = TokenEstimator.estimate_text(f"--- FILE: {clean_path} ---\n{content}\n")
+
+        # Resolve context window and 60% budget cap
+        active_model = model_name or getattr(self, "model_name", None) or DEFAULT_MODEL_ID
+        context_window = get_model_context_window(active_model)
+        max_ram_budget = int(context_window * self.max_ram_budget_ratio)
+
+        # Calculate current RAM tokens (excluding this file if it's already mounted and re-mounting)
+        current_ram_tokens = sum(
+            TokenEstimator.estimate_text(f"--- FILE: {p} ---\n{c}\n")
+            for p, c in self.mounted_virtual_ram.items()
+            if p != clean_path
+        )
+        new_total_tokens = current_ram_tokens + file_tokens
+
+        if new_total_tokens > max_ram_budget:
+            return (
+                f"Error: Virtual RAM budget exceeded. Mounting '{clean_path}' (~{file_tokens} tokens) "
+                f"would bring total RAM usage to ~{new_total_tokens} tokens, exceeding the 60% budget cap "
+                f"of {max_ram_budget} tokens (model context window: {context_window}). "
+                f"Please call unmount_file(file_path=\"...\") on inactive files before mounting this file."
+            )
+
+        self.mounted_virtual_ram[clean_path] = content
+        lines_count = len(content.splitlines())
+        pct = round((new_total_tokens / max_ram_budget) * 100, 1) if max_ram_budget > 0 else 0.0
+
+        if self.event_callback:
+            self.event_callback({
+                "type": "virtual_ram_updated",
+                "action": "mount",
+                "file": clean_path,
+                "ram_tokens": new_total_tokens,
+                "max_ram_budget": max_ram_budget,
+            })
+
+        return (
+            f"Successfully mounted '{clean_path}' into Virtual RAM ({lines_count} lines, ~{file_tokens} tokens).\n"
+            f"Total Virtual RAM utilization: {new_total_tokens}/{max_ram_budget} tokens ({pct}% of 60% cap).\n"
+            f"This file is now pinned in your working memory across turns. Call unmount_file('{clean_path}') when done."
+        )
+
+    def unmount_file(self, file_path: str, **kwargs) -> str:
+        """Unmounts an active workspace file from Dynamic Virtual RAM to free working memory.
+
+        Args:
+            file_path: Relative path to the file to unmount.
+
+        Returns:
+            Confirmation of removal and tokens released.
+        """
+        if not file_path:
+            return "Error: 'file_path' is required to unmount a file."
+
+        clean_file_path = str(file_path).strip()
+        clean_path = os.path.normpath(clean_file_path).lstrip("/").replace("\\", "/")
+
+        target_key = None
+        if clean_path in self.mounted_virtual_ram:
+            target_key = clean_path
+        else:
+            for k in self.mounted_virtual_ram:
+                if k.endswith(clean_path) or clean_path.endswith(k) or Path(k).name == Path(clean_path).name:
+                    target_key = k
+                    break
+
+        if not target_key:
+            mounted_list = list(self.mounted_virtual_ram.keys())
+            return f"Error: File '{file_path}' is not currently mounted in Virtual RAM. Currently mounted files: {mounted_list or 'None'}."
+
+        content = self.mounted_virtual_ram.pop(target_key)
+        freed_tokens = TokenEstimator.estimate_text(f"--- FILE: {target_key} ---\n{content}\n")
+
+        if self.event_callback:
+            self.event_callback({
+                "type": "virtual_ram_updated",
+                "action": "unmount",
+                "file": target_key,
+                "freed_tokens": freed_tokens,
+                "remaining_files": list(self.mounted_virtual_ram.keys()),
+            })
+
+        return f"Successfully unmounted '{target_key}' from Virtual RAM (freed ~{freed_tokens} tokens). Remaining mounted files: {len(self.mounted_virtual_ram)}."
+
+    close_file = unmount_file
+
+    def list_mounted_files(self, model_name: Optional[str] = None) -> str:
+        """Lists all files currently mounted in Dynamic Virtual RAM, with token metrics and budget utilization.
+
+        Returns:
+            A formatted table or list of mounted files and capacity metrics.
+        """
+        if not self.mounted_virtual_ram:
+            return "Virtual RAM is currently empty (0 files mounted). Call mount_file(file_path=\"...\") to mount working files."
+
+        active_model = model_name or getattr(self, "model_name", None) or DEFAULT_MODEL_ID
+        context_window = get_model_context_window(active_model)
+        max_ram_budget = int(context_window * self.max_ram_budget_ratio)
+
+        lines = ["=== ACTIVE VIRTUAL RAM REGISTER ==="]
+        total_tokens = 0
+        for path, content in sorted(self.mounted_virtual_ram.items()):
+            file_tokens = TokenEstimator.estimate_text(f"--- FILE: {path} ---\n{content}\n")
+            total_tokens += file_tokens
+            file_lines = len(content.splitlines())
+            lines.append(f"- {path} ({file_lines} lines, ~{file_tokens} tokens)")
+
+        pct = round((total_tokens / max_ram_budget) * 100, 1) if max_ram_budget > 0 else 0.0
+        lines.append(f"Total: {total_tokens}/{max_ram_budget} tokens ({pct}% of 60% window budget).")
+        return "\n".join(lines)
 
     def view_bulk(self, files: Any = None, **kwargs) -> str:
         """View the contents of multiple files in a single batched operation.
@@ -313,6 +529,7 @@ class FileTools:
             target.parent.mkdir(parents=True, exist_ok=True)
             with open(target, "w", encoding="utf-8") as f:
                 f.write(content)
+            self._sync_virtual_ram_on_change(file_path, content)
             if self.event_callback:
                 self.event_callback({"type": "file_changed", "file": file_path})
             return f"Successfully wrote to {file_path}"
@@ -355,6 +572,7 @@ class FileTools:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 with open(target, "w", encoding="utf-8") as f:
                     f.write(content)
+                self._sync_virtual_ram_on_change(file_path, content)
                 written_paths.append(file_path)
 
             if self.event_callback:
@@ -395,6 +613,7 @@ class FileTools:
 
             with open(target, "w", encoding="utf-8") as f:
                 f.writelines(lines)
+            self._sync_virtual_ram_on_change(file_path, "".join(lines))
 
             if self.event_callback:
                 self.event_callback({"type": "file_changed", "file": file_path})
@@ -432,12 +651,14 @@ class FileTools:
                 if replace_all:
                     updated = content.replace(old_text, new_text)
                     target.write_text(updated, encoding="utf-8")
+                    self._sync_virtual_ram_on_change(file_path, updated)
                     if self.event_callback:
                         self.event_callback({"type": "file_changed", "file": file_path})
                     return f"Successfully edited {file_path} (replaced all {count} occurrences)"
                 else:
                     updated = content.replace(old_text, new_text, 1)
                     target.write_text(updated, encoding="utf-8")
+                    self._sync_virtual_ram_on_change(file_path, updated)
                     if self.event_callback:
                         self.event_callback({"type": "file_changed", "file": file_path})
                     return f"Successfully edited {file_path}"
@@ -490,6 +711,7 @@ class FileTools:
                     updated = "\n".join(updated_lines) + ("\n" if has_trailing_nl else "")
 
                     target.write_text(updated, encoding="utf-8")
+                    self._sync_virtual_ram_on_change(file_path, updated)
                     if self.event_callback:
                         self.event_callback({"type": "file_changed", "file": file_path})
 
@@ -541,3 +763,129 @@ class FileTools:
             return f"Contents of '{path}':\n" + "\n".join(entries)
         except Exception as e:
             return f"Error listing directory: {str(e)}"
+
+    def locate_files_by_pattern(
+        self,
+        directory: str = ".",
+        max_depth: int = 3,
+        pattern: str = "*",
+    ) -> str:
+        """Explore workspace directory topology as a depth-limited hierarchical visual tree.
+
+        Args:
+            directory: The relative path to the directory to explore (default: ".").
+            max_depth: Maximum directory traversal depth (default: 3, clamped between 1 and 10).
+            pattern: File pattern to filter results (e.g. '*.js', '*.jsx', default: '*').
+
+        Returns:
+            A clean visual file tree formatted with branch connectors.
+        """
+        dir_str = str(directory).strip() if directory and str(directory).strip() else "."
+        if not self._is_safe_path(dir_str):
+            return f"Error: Access denied to path outside sandbox: {dir_str}"
+
+        target = (self.sandbox_path / dir_str).resolve()
+        if not target.exists():
+            return f"Error: Directory not found: {dir_str}"
+        if not target.is_dir():
+            return f"Error: '{dir_str}' is a file, not a directory. Use read_file instead."
+
+        try:
+            depth_limit = max(1, min(int(float(max_depth)), 10))
+        except (ValueError, TypeError):
+            depth_limit = 3
+        pat = pattern.strip() if pattern and pattern.strip() else "*"
+        ignore_dirs = {
+            ".git", "node_modules", "dist", "build", "venv", ".venv",
+            ".next", "__pycache__", ".cache", ".pytest_cache", ".turbo",
+            ".gemini", "coverage",
+        }
+        ignore_files = {".DS_Store"}
+
+        def has_matching_files(dir_path: Path, current_depth: int) -> bool:
+            if pat == "*":
+                return True
+            if current_depth > depth_limit:
+                return False
+            try:
+                for entry in dir_path.iterdir():
+                    if entry.name in ignore_dirs or (entry.is_dir() and entry.name.startswith(".")):
+                        continue
+                    if entry.is_file():
+                        if entry.name not in ignore_files and fnmatch.fnmatch(entry.name.lower(), pat.lower()):
+                            return True
+                    elif entry.is_dir() and current_depth < depth_limit:
+                        if has_matching_files(entry, current_depth + 1):
+                            return True
+            except Exception:
+                pass
+            return False
+
+        lines: List[str] = []
+        item_count = 0
+        max_items = 200
+
+        def build_tree(current_dir: Path, prefix: str, current_depth: int):
+            nonlocal item_count
+            if item_count >= max_items:
+                return
+
+            try:
+                entries = sorted(
+                    current_dir.iterdir(),
+                    key=lambda e: (not e.is_dir(), e.name.lower()),
+                )
+            except Exception as e:
+                lines.append(f"{prefix}[Error reading {current_dir.name}: {e}]")
+                return
+
+            valid_entries = []
+            for entry in entries:
+                if entry.name in ignore_dirs or (entry.is_dir() and entry.name.startswith(".")):
+                    continue
+                if entry.is_file():
+                    if entry.name in ignore_files:
+                        continue
+                    if pat == "*" or fnmatch.fnmatch(entry.name.lower(), pat.lower()):
+                        valid_entries.append(entry)
+                elif entry.is_dir():
+                    if has_matching_files(entry, current_depth):
+                        valid_entries.append(entry)
+
+            for idx, entry in enumerate(valid_entries):
+                if item_count >= max_items:
+                    break
+                item_count += 1
+                is_last = (idx == len(valid_entries) - 1)
+                connector = "└── " if is_last else "├── "
+                sub_prefix = "    " if is_last else "│   "
+
+                if entry.is_dir():
+                    lines.append(f"{prefix}{connector}{entry.name}/")
+                    if current_depth < depth_limit:
+                        build_tree(entry, prefix + sub_prefix, current_depth + 1)
+                    else:
+                        try:
+                            has_sub = any(
+                                e.name not in ignore_dirs and not (e.is_dir() and e.name.startswith("."))
+                                for e in entry.iterdir()
+                            )
+                            if has_sub:
+                                lines.append(f"{prefix}{sub_prefix}└── ... (max_depth {depth_limit} reached)")
+                        except Exception:
+                            pass
+                else:
+                    lines.append(f"{prefix}{connector}{entry.name}")
+
+        build_tree(target, "", 1)
+
+        root_label = dir_str.rstrip("/\\") if dir_str != "." else "."
+        if not lines:
+            return f"[Topology of '{dir_str}' (max_depth={depth_limit}, pattern='{pat}')]:\nNo matching files found."
+
+        header = f"[Topology of '{dir_str}' (max_depth={depth_limit}, pattern='{pat}')]:\n{root_label}/"
+        output = header + "\n" + "\n".join(lines)
+        if item_count >= max_items:
+            output += f"\n... (results capped at {max_items} items. Refine pattern or directory to narrow search.)"
+
+        return output

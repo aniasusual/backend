@@ -1,5 +1,5 @@
 """
-Diagnostic script to test 'build me a to-do app' prompt with local qwen2.5-coder:7b,
+Diagnostic script to test 'build me a to-do app' prompt with local qwen2.5-coder:14b,
 recording every token, tool call, turn, and analyzing why it may stop prematurely.
 """
 
@@ -32,7 +32,7 @@ async def diagnose():
     prompt = "build me a to-do app"
     print(f"\nUser Prompt: \"{prompt}\"")
 
-    harness = CodingHarness(model_name="qwen2.5-coder:7b")
+    harness = CodingHarness(model_name="qwen2.5-coder:14b")
     context = {
         "registry": registry,
         "messages": [],

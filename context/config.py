@@ -36,7 +36,7 @@ class ContextConfig:
 # ─────────────────────────────────────────────────────────────────────────────
 
 RECENCY_ANCHOR_DEFAULT = (
-    "\n\n[Instruction: Directly execute tools (write_files, edit_file, read_file, execute_command) "
+    "\n\n[Instruction: Directly execute tools (write_files, edit_file, read_file, mount_file, execute_command) "
     "to inspect and modify project files on disk. Do not output raw code blocks in chat.]"
 )
 
@@ -56,4 +56,26 @@ RECENCY_ANCHOR_CONVERSATIONAL = (
     "\n\n[Instruction: Respond directly and accurately to the user's question or message in chat. "
     "Do NOT invoke file-writing, editing, or terminal tools unless specifically requested by the user.]"
 )
+
+RECENCY_ANCHOR_FIRST_MESSAGE = (
+    "\n\n[Project Context — First Turn]\n"
+    "The project currently contains a placeholder starter, NOT the user's requested app:\n"
+    "- `src/App.jsx`: Temporary welcome screen with `.crbn-*` CSS classes. You MUST completely "
+    "overwrite this file with the actual application. Never keep, wrap, or extend the welcome markup.\n"
+    "- `server/index.js`: Starter Express backend with mock CRUD routes and an in-memory data store. "
+    "Replace or adapt these routes and data models to match the requested app.\n"
+    "- `src/index.css`: Production design system with CSS variables (`:root`), glass cards, buttons, "
+    "and form utilities. Reuse these tokens for consistent aesthetics. Discard `.crbn-*` placeholder styles.\n"
+    "- `package.json`: Has react, react-dom, lucide-react, express, cors pre-installed.\n\n"
+    "Start by inspecting the project structure, then build the requested application using write_files "
+    "to create both frontend and backend in one atomic operation."
+)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Continuity Alert Markers (CP-103.2, CP-106)
+# ─────────────────────────────────────────────────────────────────────────────
+
+ALERT_EVICTION_MARKER = "[Context System Alert: Historical logs pruned due to token budget caps.]"
+
 

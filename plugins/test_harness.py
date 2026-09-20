@@ -15,7 +15,7 @@ class TestHarness(BaseHarness):
         try:
             client = ollama.AsyncClient()
             response = await client.chat(
-                model='qwen2.5-coder:7b',
+                model='qwen2.5-coder:14b',
                 messages=[
                     {
                         'role': 'system', 
@@ -45,6 +45,6 @@ class TestHarness(BaseHarness):
             yield {"type": "status", "content": "Done"}
             
         except ollama.ResponseError as e:
-            yield {"type": "status", "content": f"Ollama Error: {e.error}. Ensure Ollama is running and model 'qwen2.5-coder:7b' is pulled."}
+            yield {"type": "status", "content": f"Ollama Error: {e.error}. Ensure Ollama is running and model 'qwen2.5-coder:14b' is pulled."}
         except Exception as e:
             yield {"type": "status", "content": f"Error: {str(e)}"}

@@ -12,6 +12,13 @@ KNOWN_TOOLS = {
     "glob_files",
     "grep_search",
     "list_directory",
+    "locate_files_by_pattern",
+    "extract_signatures",
+    "map_dependencies",
+    "mount_file",
+    "unmount_file",
+    "close_file",
+    "list_mounted_files",
     "lint_javascript",
     "get_assets",
     "ask_human",
@@ -54,10 +61,13 @@ class ToolCallParser:
                     return res
 
         # 3. Extract from <tool_call>...</tool_call> or <write_files>...</write_files> tags
-        tag_match = re.search(r"<(?:tool_call|tool|write_files|write_file|edit_file|read_file|execute_command)>\s*([\s\S]*?)\s*</", text)
+        tag_match = re.search(r"<(tool_call|tool|write_files|write_file|edit_file|read_file|locate_files_by_pattern|extract_signatures|map_dependencies|mount_file|unmount_file|close_file|list_mounted_files|execute_command)>\s*([\s\S]*?)\s*</", text)
         if tag_match:
-            parsed = cls._try_parse_json(tag_match.group(1).strip())
+            tag_name = tag_match.group(1)
+            parsed = cls._try_parse_json(tag_match.group(2).strip())
             if parsed:
+                if isinstance(parsed, dict) and tag_name in KNOWN_TOOLS and not ("name" in parsed or "tool" in parsed or "action" in parsed or "function" in parsed):
+                    return [{"name": tag_name, "arguments": parsed}]
                 res = cls._normalize_calls(parsed)
                 if res:
                     return res

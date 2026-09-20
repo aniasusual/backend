@@ -29,7 +29,8 @@ class TroubleshootSubagent(BaseSubagent):
         model_name: str = DEFAULT_MODEL_ID,
         tool_registry: Optional[Any] = None,
         event_callback: Optional[Any] = None,
-        max_iterations: int = 6,
+        max_iterations: int = 40,
+        allowed_tools: Optional[Any] = None,
         **kwargs,
     ):
         super().__init__(
@@ -37,14 +38,15 @@ class TroubleshootSubagent(BaseSubagent):
             model_name=model_name,
             tool_registry=tool_registry,
             event_callback=event_callback,
+            allowed_tools=allowed_tools,
             **kwargs,
         )
         self.max_iterations = max_iterations
 
     @property
-    def allowed_tools(self) -> Set[str]:
+    def default_allowed_tools(self) -> Set[str]:
         """Strictly read-only tools permitted for RCA investigation."""
-        return {"read_file", "view_bulk", "grep_search", "lint_javascript", "glob_files"}
+        return {"read_file", "view_bulk", "grep_search", "lint_javascript", "glob_files", "list_directory"}
 
     @property
     def system_prompt(self) -> str:
@@ -73,18 +75,22 @@ class TroubleshootSubagent(BaseSubagent):
 
         # ── Autonomous Child-Loop Investigation ──────────────────────
         file_loc = self._extract_file_location(clean_log, context_file)
-        task_prompt = f"""Investigate the following error in the workspace:
+        task_prompt = f"""Investigate the following error in the workspace using your read-only tools:
 
 ERROR LOG / STACK TRACE:
 {clean_log}
 
-RELEVANT FILE / LOCATION:
-{file_loc if file_loc else 'Unknown - please locate using glob_files, grep_search, or file inspection'}
+SEARCH HINT / SUSPECTED LOCATION:
+{file_loc if file_loc else 'Unknown - use list_directory, glob_files, or grep_search to discover the file and failing code'}
 
 RECENT ACTIONS:
 {recent_actions if recent_actions else 'None provided'}
 
-Inspect the code around the failing location and produce the structured RCA report with exact replacement code for the main agent."""
+INVESTIGATION DIRECTIVES:
+1. If a suspected file is provided, inspect it using `read_file` or `view_bulk`.
+2. If location is unknown or ambiguous, use `list_directory` to see workspace structure, `glob_files` to find relevant components/routes, or `grep_search` to find symbols/error text.
+3. Verify the root cause by examining the actual code on disk.
+4. Conclude by outputting your structured Markdown RCA report (do not invoke any tools on your final turn)."""
 
         if self.tool_registry:
             try:
@@ -98,12 +104,13 @@ Inspect the code around the failing location and produce the structured RCA repo
                     event_callback=self.event_callback,
                 )
                 report = runner.run(task_prompt)
+                self.last_run_events = runner.last_run_events
+                self.last_run_metrics = runner.last_run_metrics
                 if (
                     report
                     and not report.startswith("Error:")
                     and not report.startswith("Subagent execution failed")
-                    and "Root Cause Analysis" in report
-                    and len(report.strip()) >= 50
+                    and len(report.strip()) >= 30
                 ):
                     return report
             except Exception as e:

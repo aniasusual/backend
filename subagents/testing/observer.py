@@ -36,21 +36,33 @@ class DOMObserver:
 
             let role = el.getAttribute('role') || '';
             let type = el.getAttribute('type') || role;
+            let placeholder = el.getAttribute('placeholder') || '';
             let testId = el.getAttribute('data-testid') || el.getAttribute('data-test-id') || '';
             let name = el.getAttribute('name') || '';
             let isDisabled = el.disabled || el.getAttribute('aria-disabled') === 'true';
+            let isChecked = el.checked || el.getAttribute('aria-checked') === 'true';
 
             elements.push({
                 id: sdetId,
                 tag: tag,
                 type: type,
                 text: text,
+                placeholder: placeholder,
                 testid: testId,
                 name: name,
-                disabled: isDisabled
+                disabled: isDisabled,
+                checked: isChecked,
             });
         });
-        return elements;
+
+        const canScrollDown = (window.innerHeight + window.scrollY) < document.documentElement.scrollHeight - 20;
+
+        return {
+            elements: elements,
+            can_scroll_down: canScrollDown,
+            scroll_y: Math.round(window.scrollY),
+            page_height: document.documentElement.scrollHeight,
+        };
     }
     """
 
@@ -80,9 +92,12 @@ class DOMObserver:
         Executes in-page inspection to capture dynamic elements and in-DOM error notices.
         """
         try:
-            elements: List[Dict[str, Any]] = page.evaluate(cls.EXTRACT_ELEMENTS_SCRIPT)
+            eval_res = page.evaluate(cls.EXTRACT_ELEMENTS_SCRIPT)
+            elements: List[Dict[str, Any]] = eval_res.get("elements", [])
+            can_scroll_down: bool = eval_res.get("can_scroll_down", False)
         except Exception:
             elements = []
+            can_scroll_down = False
 
         try:
             dom_errors: List[str] = page.evaluate(cls.EXTRACT_ERRORS_SCRIPT)
@@ -104,6 +119,7 @@ class DOMObserver:
             "title": title,
             "elements": elements,
             "dom_errors": dom_errors,
+            "can_scroll_down": can_scroll_down,
         }
 
     @classmethod
@@ -112,60 +128,74 @@ class DOMObserver:
         observation: Dict[str, Any],
         step: int,
         max_steps: int,
-        console_errors: List[str],
+        instructions: str = "",
+        console_errors: List[str] = None,
         previous_action_result: str = "",
     ) -> str:
         """
         Formats real-time DOM snapshot, active errors, and console health into prompt state.
         """
+        if console_errors is None:
+            console_errors = []
+
         elements = observation.get("elements", [])
         dom_errors = observation.get("dom_errors", [])
+        can_scroll_down = observation.get("can_scroll_down", False)
         title = observation.get("title", "")
         url = observation.get("url", "")
 
         out = [f"### [Step {step}/{max_steps}] Live Application Observation"]
-        out.append(f"- **URL**: `{url}` | **Title**: `{title}`")
+        if instructions:
+            out.append(f"- **Testing Instructions**: {instructions}")
+        out.append(f"- **Active URL**: `{url}` | **Page Title**: `{title}`")
 
         if previous_action_result:
-            out.append(f"- **Last Action Result**: {previous_action_result}")
+            out.append(f"- **Previous Action Result**: {previous_action_result}")
 
         # In-DOM Errors
         if dom_errors:
-            out.append("\n⚠️ **IN-DOM ERROR ALERTS DETECTED ON SCREEN**:")
+            out.append("\n⚠️ **IN-DOM ERROR ALERTS ON PAGE**:")
             for err in dom_errors[:5]:
                 out.append(f"  - {err}")
         else:
-            out.append("\n- **In-DOM Errors**: None visible.")
+            out.append("- **In-DOM Errors**: None visible.")
 
         # Console / Crash Status
         if console_errors:
-            out.append(f"- **Console/Runtime Warnings ({len(console_errors)})**:")
-            for cerr in console_errors[-3:]:
+            out.append(f"- **Browser Console/Runtime Logs ({len(console_errors)})**:")
+            for cerr in console_errors[-4:]:
                 out.append(f"  - `{cerr}`")
         else:
-            out.append("- **Console Health**: Zero uncaught exceptions or network errors.")
+            out.append("- **Browser Console Health**: Clean. Zero uncaught exceptions or network crashes.")
+
+        if can_scroll_down:
+            out.append("- **Scroll Status**: Page extends below viewport. You can call `browser_scroll(direction='down')` if needed.")
 
         # Interactive Controls
         out.append(f"\n📋 **Interactive Controls Discovered ({len(elements)} total)**:")
         if not elements:
             out.append("  (No interactive elements currently visible)")
         else:
-            for el in elements[:25]:
+            for el in elements[:28]:
                 details = []
                 if el.get("testid"):
                     details.append(f"testid='{el['testid']}'")
                 if el.get("type"):
                     details.append(f"type='{el['type']}'")
+                if el.get("placeholder"):
+                    details.append(f"placeholder='{el['placeholder']}'")
                 if el.get("name"):
                     details.append(f"name='{el['name']}'")
                 if el.get("disabled"):
                     details.append("DISABLED")
+                if el.get("checked"):
+                    details.append("CHECKED")
 
                 detail_str = f" ({', '.join(details)})" if details else ""
                 out.append(f"  - [{el['id']}] <{el['tag']}> \"{el['text']}\"{detail_str}")
 
-            if len(elements) > 25:
-                out.append(f"  - ... and {len(elements) - 25} more elements.")
+            if len(elements) > 28:
+                out.append(f"  - ... and {len(elements) - 28} more elements.")
 
-        out.append("\nDecide your next action (emit JSON only):")
+        out.append("\nDecide your next action by invoking one of the browser tools (or browser_finish to conclude):")
         return "\n".join(out)

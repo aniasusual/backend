@@ -1,3 +1,4 @@
+// STARTER BACKEND: Adapt or replace these mock routes and data store to match the requested application.
 import express from 'express';
 import cors from 'cors';
 

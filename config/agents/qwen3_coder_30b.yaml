@@ -1,17 +1,17 @@
 apiVersion: agents.v1
 kind: Agent
 metadata:
-  id: qwen2.5_coder_14b_32b
-  name: Qwen 2.5 Coder 14B-32B Workstation Agent
+  id: qwen3_coder_30b
+  name: Qwen3-Coder-30B-A3B Agent
   version: 1
-  description: "High-accuracy multi-subagent orchestration for large coder models."
-  tags: [workstation, 14b, 32b, local]
+  description: "Next-generation Mixture-of-Experts agentic coding model with 3.3B active parameters and 256k context."
+  tags: [moe, 30b, 3.3b_active, qwen3, agentic]
 
 spec:
-  tier: 2
-  context_window: 64000
-  max_iterations: 50
-  prompt_id: "intermediate_14b_agent"
+  tier: 3
+  context_window: 262144
+  max_iterations: 100
+  prompt_id: "workstation_32b_agent"
   is_reasoning_model: false
   strip_think_tags: false
   text_fallback_parser: true
@@ -26,13 +26,21 @@ spec:
     - insert_text
     - grep_search
     - list_directory
+    - locate_files_by_pattern
+    - extract_signatures
+    - map_dependencies
     - lint_javascript
     - get_assets
+    - search_web
     - ask_human
     - finish
     - execute_command
     - run_background_command
     - stop_background_command
+    - mount_file
+    - unmount_file
+    - close_file
+    - list_mounted_files
 
   enabled_subagents:
     - invoke_design_agent
@@ -42,9 +50,6 @@ spec:
     - invoke_code_reviewer_agent
 
   target_models:
-    - "qwen2.5-coder:14b"
-    - "qwen2.5-coder:32b"
-    - "codellama:13b"
-    - "starcoder2:15b"
-    - "deepseek-coder:14b"
-    - "codellama:34b"
+    - "qwen3-coder:30b-a3b"
+    - "qwen3-coder:30b"
+    - "qwen3-coder"

@@ -1,6 +1,6 @@
 import subprocess
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple, Any
 
 
 class LinterTools:
@@ -13,39 +13,79 @@ class LinterTools:
         self.sandbox_path = sandbox_path
         self._is_safe_path = is_safe_path_fn
 
-    def lint_javascript(self, file_path: str = ".") -> str:
+    def lint_javascript(
+        self,
+        file_path: Optional[str] = ".",
+        items: Optional[Any] = None,
+        files: Optional[Any] = None,
+        **kwargs: Any
+    ) -> str:
         """Run a static syntax and import validation check on JavaScript/JSX/TypeScript files.
 
         Args:
             file_path: The relative path to the file or directory to lint (e.g. 'src/App.jsx', 'server/index.js').
+            items: Optional list of file paths (or polymorphic item objects) to lint.
+            files: Optional list of file paths to lint.
+            **kwargs: Extra parameters ignored safely for robust LLM tool calling.
 
         Returns:
             A formatted diagnostic report indicating syntax validity or exact line/column errors.
         """
-        if not file_path or not file_path.strip():
-            file_path = "."
+        paths_to_check: List[str] = []
 
-        if not self._is_safe_path(file_path):
-            return f"Error: Access denied to path outside sandbox: {file_path}"
+        if isinstance(items, list) and items:
+            for item in items:
+                if isinstance(item, str) and item.strip():
+                    paths_to_check.append(item.strip())
+                elif isinstance(item, dict):
+                    p = item.get("file_path") or item.get("path") or item.get("file")
+                    if p and str(p).strip():
+                        paths_to_check.append(str(p).strip())
+        elif isinstance(items, str) and items.strip():
+            paths_to_check.append(items.strip())
 
-        target = (self.sandbox_path / file_path).resolve()
-        if not target.exists():
-            return f"Error: Target path does not exist: {file_path}"
+        if isinstance(files, list) and files:
+            for item in files:
+                if isinstance(item, str) and item.strip():
+                    paths_to_check.append(item.strip())
+                elif isinstance(item, dict):
+                    p = item.get("file_path") or item.get("path") or item.get("file")
+                    if p and str(p).strip():
+                        paths_to_check.append(str(p).strip())
+        elif isinstance(files, str) and files.strip():
+            paths_to_check.append(files.strip())
+
+        if not paths_to_check:
+            if file_path and str(file_path).strip():
+                paths_to_check.append(str(file_path).strip())
+            else:
+                paths_to_check.append(".")
 
         files_to_lint: List[Path] = []
         ignore_dirs = {".git", "node_modules", "dist", "build", "venv", ".next", "__pycache__"}
 
-        if target.is_file():
-            files_to_lint.append(target)
-        else:
-            for item in target.rglob("*"):
-                if any(d in item.parts for d in ignore_dirs):
-                    continue
-                if item.is_file() and item.suffix.lower() in {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}:
-                    files_to_lint.append(item)
+        for p in paths_to_check:
+            if not self._is_safe_path(p):
+                return f"Error: Access denied to path outside sandbox: {p}"
+
+            target = (self.sandbox_path / p).resolve()
+            if not target.exists():
+                return f"Error: Target path does not exist: {p}"
+
+            if target.is_file():
+                if target not in files_to_lint:
+                    files_to_lint.append(target)
+            else:
+                for item in target.rglob("*"):
+                    if any(d in item.parts for d in ignore_dirs):
+                        continue
+                    if item.is_file() and item.suffix.lower() in {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}:
+                        if item not in files_to_lint:
+                            files_to_lint.append(item)
 
         if not files_to_lint:
-            return f"No JavaScript/TypeScript files found to lint at '{file_path}'."
+            display_path = ", ".join(paths_to_check)
+            return f"No JavaScript/TypeScript files found to lint at '{display_path}'."
 
         errors: List[str] = []
         checked_count = 0

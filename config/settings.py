@@ -30,7 +30,7 @@ BACKEND_PORT: int = int(os.getenv("BACKEND_PORT", "8000"))
 
 # Ollama LLM Connection
 OLLAMA_HOST: str = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
-DEFAULT_MODEL_ID: str = os.getenv("DEFAULT_MODEL_ID", "qwen2.5-coder:7b")
+DEFAULT_MODEL_ID: str = os.getenv("DEFAULT_MODEL_ID", "qwen2.5-coder:14b")
 
 # Storage & Cache Directories
 PROJECTS_ROOT: Path = _expand_path(os.getenv("PROJECTS_ROOT", str(Path.home() / ".lowkey" / "projects")))

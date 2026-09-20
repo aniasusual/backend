@@ -11,113 +11,25 @@ import os
 import re
 from typing import Dict, Any, List, Optional
 
-DEFAULT_MODEL_ID = os.getenv("DEFAULT_MODEL_ID", "qwen2.5-coder:7b")
+DEFAULT_MODEL_ID = os.getenv("DEFAULT_MODEL_ID", "qwen2.5-coder:14b")
 
 CURATED_MODELS: List[Dict[str, Any]] = [
-    # ---- Ultra-Lightweight (4 GB – 8 GB RAM) ----
-    {
-        "id": "qwen2.5-coder:1.5b",
-        "name": "Qwen 2.5 Coder 1.5B",
-        "param_size": "1.5B",
-        "required_ram_gb": 2.0,
-        "context_length": "32k",
-        "description": "Ultra-lightweight and blazingly fast. Ideal for low-spec or portable laptops.",
-        "tags": ["Ultra-Fast", "Low Memory"],
-        "is_default": False,
-    },
-    {
-        "id": "qwen2.5-coder:3b",
-        "name": "Qwen 2.5 Coder 3B",
-        "param_size": "3.1B",
-        "required_ram_gb": 3.5,
-        "context_length": "32k",
-        "description": "Fast and capable coder with the ideal balance for 8 GB RAM machines.",
-        "tags": ["Fast", "8GB Optimized"],
-        "is_default": False,
-    },
-    {
-        "id": "llama3.2:3b",
-        "name": "Llama 3.2 3B",
-        "param_size": "3.2B",
-        "required_ram_gb": 3.5,
-        "context_length": "128k",
-        "description": "Meta's ultra-fast compact generalist with an expansive 128k context window.",
-        "tags": ["128k Context", "Compact"],
-        "is_default": False,
-    },
-
-    # ---- Standard & High-Efficiency (8 GB – 16 GB RAM) ----
     {
         "id": "qwen2.5-coder:7b",
         "name": "Qwen 2.5 Coder 7B",
         "param_size": "7.6B",
         "required_ram_gb": 5.0,
         "context_length": "32k",
-        "description": "Balanced speed & accuracy with native tool support. Ideal for full-stack apps.",
-        "tags": ["Fast", "Native Tools", "Full-Stack"],
-        "is_default": True,
-    },
-    {
-        "id": "llama3.1:8b",
-        "name": "Llama 3.1 8B",
-        "param_size": "8.0B",
-        "required_ram_gb": 5.5,
-        "context_length": "128k",
-        "description": "Meta's flagship open generalist model with a massive 128k context window.",
-        "tags": ["128k Context", "Meta"],
+        "description": "Ultra-fast code generation and agentic tool use optimized for local 16GB machines (60-80+ tok/s).",
+        "tags": ["Fast & Lightweight", "Native Tools", "Optimal Performance", "SOTA 7B"],
         "is_default": False,
-    },
-    {
-        "id": "deepseek-r1:7b",
-        "name": "DeepSeek R1 7B",
-        "param_size": "7.6B",
-        "required_ram_gb": 5.0,
-        "context_length": "64k",
-        "description": "Lightweight step-by-step reasoning specialist (Qwen-distilled).",
-        "tags": ["Reasoning", "Chain-of-Thought"],
-        "is_default": False,
-    },
-    {
-        "id": "deepseek-r1:8b",
-        "name": "DeepSeek R1 8B",
-        "param_size": "8.0B",
-        "required_ram_gb": 5.5,
-        "context_length": "64k",
-        "description": "Llama-distilled reasoning model featuring step-by-step thinking.",
-        "tags": ["Reasoning", "Llama-Distill"],
-        "is_default": False,
-    },
-    {
-        "id": "gemma2:9b",
-        "name": "Gemma 2 9B",
-        "param_size": "9.2B",
-        "required_ram_gb": 6.5,
-        "context_length": "8k",
-        "description": "Google DeepMind's high-efficiency architecture with strong code comprehension.",
-        "tags": ["Google", "Efficient"],
-        "is_default": False,
-    },
-
-    # ---- Medium & Heavyweight (16 GB – 32 GB RAM) ----
-    {
-        "id": "mistral-nemo:12b",
-        "name": "Mistral Nemo 12B",
-        "param_size": "12.2B",
-        "required_ram_gb": 8.5,
-        "context_length": "128k",
-        "description": "Mistral AI & NVIDIA collaboration with 128k context and robust code logic.",
-        "tags": ["128k Context", "Mistral"],
-        "is_default": False,
-    },
-    {
-        "id": "deepseek-coder-v2:16b",
-        "name": "DeepSeek Coder V2 16B",
-        "param_size": "16B (MoE)",
-        "required_ram_gb": 9.5,
-        "context_length": "128k",
-        "description": "Mixture-of-Experts coding model with 2.4B active parameters and 128k context.",
-        "tags": ["MoE", "128k Context", "Multi-File"],
-        "is_default": False,
+        "aliases": [
+            "qwen2.5-coder:7b",
+            "qwen2.5-coder:7b-instruct",
+            "qwen2.5-coder:latest",
+            "qwen2.5-coder:7b-instruct-q4_K_M",
+            "qwen2.5-coder",
+        ],
     },
     {
         "id": "qwen2.5-coder:14b",
@@ -125,102 +37,109 @@ CURATED_MODELS: List[Dict[str, Any]] = [
         "param_size": "14.7B",
         "required_ram_gb": 10.0,
         "context_length": "32k",
-        "description": "High-accuracy reasoning and architectural planning across multi-file features.",
-        "tags": ["Deep Reasoning", "Architecture"],
-        "is_default": False,
+        "description": "High-accuracy reasoning and architectural planning across multi-file features with native tool calling.",
+        "tags": ["Flagship Default", "Native Tools", "Full-Stack"],
+        "is_default": True,
+        "aliases": ["qwen2.5-coder:14b", "qwen2.5-coder:14b-instruct", "qwen2.5-coder:14b-instruct-q4_K_M"],
     },
     {
-        "id": "deepseek-r1:14b",
-        "name": "DeepSeek R1 14B",
-        "param_size": "14.7B",
-        "required_ram_gb": 10.0,
-        "context_length": "64k",
-        "description": "Reasoning specialist with deep step-by-step thinking for intricate algorithms.",
-        "tags": ["Reasoning", "Math/Logic"],
-        "is_default": False,
-    },
-    {
-        "id": "codestral:22b",
-        "name": "Codestral 22B",
-        "param_size": "22.2B",
-        "required_ram_gb": 14.5,
-        "context_length": "32k",
-        "description": "Mistral AI's dedicated flagship model engineered explicitly for code generation.",
-        "tags": ["Mistral", "SOTA Code"],
-        "is_default": False,
-    },
-    {
-        "id": "gemma2:27b",
-        "name": "Gemma 2 27B",
-        "param_size": "27.2B",
-        "required_ram_gb": 18.0,
-        "context_length": "8k",
-        "description": "Google DeepMind's compact powerhouse for advanced reasoning and refactoring.",
-        "tags": ["Google", "Powerhouse"],
-        "is_default": False,
-    },
-
-    # ---- Flagship & Workstation (32 GB – 128 GB RAM) ----
-    {
-        "id": "qwen2.5-coder:32b",
-        "name": "Qwen 2.5 Coder 32B",
-        "param_size": "32.5B",
-        "required_ram_gb": 22.0,
-        "context_length": "32k",
-        "description": "Flagship open coding model with expert-level multi-file generation and refactoring.",
-        "tags": ["State of the Art", "Expert"],
-        "is_default": False,
-    },
-    {
-        "id": "deepseek-r1:32b",
-        "name": "DeepSeek R1 32B",
-        "param_size": "32.5B",
-        "required_ram_gb": 22.0,
-        "context_length": "64k",
-        "description": "Flagship open reasoning model for complex fullstack architectures.",
-        "tags": ["Reasoning", "Flagship"],
-        "is_default": False,
-    },
-    {
-        "id": "llama3.3:70b",
-        "name": "Llama 3.3 70B",
-        "param_size": "70.6B",
-        "required_ram_gb": 45.0,
+        "id": "deepseek-coder-v2:16b",
+        "name": "DeepSeek-Coder-V2-Lite (16B, 2.4B active)",
+        "param_size": "16B (2.4B active)",
+        "required_ram_gb": 9.5,
         "context_length": "128k",
-        "description": "Meta's premier flagship generalist model with unmatched open intelligence.",
-        "tags": ["Meta", "Flagship 70B", "128k Context"],
+        "description": "Mixture-of-Experts coding model with 2.4B active parameters and 128k context for repository-scale code synthesis.",
+        "tags": ["MoE", "128k Context", "Multi-File", "Code Specialist"],
         "is_default": False,
+        "aliases": ["deepseek-coder-v2:16b", "deepseek-coder-v2-lite:16b", "deepseek-coder-v2-lite", "deepseek-coder-v2:16b-lite"],
     },
     {
-        "id": "deepseek-r1:70b",
-        "name": "DeepSeek R1 70B",
-        "param_size": "70.6B",
-        "required_ram_gb": 45.0,
-        "context_length": "64k",
-        "description": "State-of-the-art chain-of-thought reasoning powerhouse for high-end workstations.",
-        "tags": ["SOTA Reasoning", "Workstation"],
+        "id": "qwen3-coder:30b-a3b",
+        "name": "Qwen3-Coder-30B-A3B",
+        "param_size": "30.5B (3.3B active)",
+        "required_ram_gb": 18.5,
+        "context_length": "256k",
+        "description": "Next-generation Mixture-of-Experts agentic coding model with 3.3B active parameters, 256k context, and native tool execution.",
+        "tags": ["MoE", "256k Context", "Agentic", "SOTA Code"],
         "is_default": False,
+        "aliases": ["qwen3-coder:30b-a3b", "qwen3-coder:30b", "qwen3-coder:30b-a3b-instruct", "qwen3-coder:30b-instruct"],
+    },
+    {
+        "id": "muse-glimmer:30b",
+        "name": "Meta Muse Glimmer 30B",
+        "param_size": "30B (Dense Multimodal)",
+        "required_ram_gb": 19.5,
+        "context_length": "128k",
+        "description": "Meta 30B dense multimodal agentic model with built-in tool failure recovery, controllable reasoning, and 2B vision encoder.",
+        "tags": ["Dense 30B", "Multimodal", "Agentic", "Failure Recovery", "SOTA Tools"],
+        "is_default": False,
+        "aliases": [
+            "muse-glimmer:30b",
+            "muse-glimmer",
+            "muse-glimmer:latest",
+            "muse-glimmer:30b-q4_K_M",
+            "muse-glimmer:30b-instruct",
+            "muse-glimmer-30b",
+        ],
     },
 ]
 
 
-
 def get_model_context_window(model_id: str, default: int = 32768) -> int:
     """Returns the context window token limit for a model ID."""
-    clean_id = model_id.split(":")[0] if ":" in model_id else model_id
+    clean_id = (model_id or "").lower().strip()
+    clean_base = clean_id.split(":")[0] if ":" in clean_id else clean_id
+
+    # 1. Exact match or alias match
     for m in CURATED_MODELS:
-        if m["id"] == model_id or m["id"].startswith(clean_id):
+        m_id = m["id"].lower()
+        aliases = [a.lower() for a in m.get("aliases", [])]
+        if clean_id == m_id or clean_id in aliases:
             ctx_str = str(m.get("context_length", "32k")).lower().strip()
             if ctx_str.endswith("k"):
                 try:
                     return int(ctx_str[:-1]) * 1024
                 except ValueError:
                     pass
+
+    # 2. Specific prefix match for tags/quantizations (e.g. qwen2.5-coder:14b-instruct-q4_K_M)
+    for m in CURATED_MODELS:
+        m_id = m["id"].lower()
+        aliases = [a.lower() for a in m.get("aliases", [])]
+        if clean_id.startswith(m_id) or any(clean_id.startswith(a) for a in aliases):
+            ctx_str = str(m.get("context_length", "32k")).lower().strip()
+            if ctx_str.endswith("k"):
+                try:
+                    return int(ctx_str[:-1]) * 1024
+                except ValueError:
+                    pass
+
+    # 3. Base prefix match fallback (e.g. if passed without tag)
+    for m in CURATED_MODELS:
+        m_id = m["id"].lower()
+        aliases = [a.lower() for a in m.get("aliases", [])]
+        if m_id.startswith(clean_base) or any(a.startswith(clean_base) for a in aliases):
+            ctx_str = str(m.get("context_length", "32k")).lower().strip()
+            if ctx_str.endswith("k"):
+                try:
+                    return int(ctx_str[:-1]) * 1024
+                except ValueError:
+                    pass
+
+    # 4. Agent profile fallback (if configured in agent YAML specs)
+    try:
+        from config.agent_loader import AgentLoader
+        profile = AgentLoader.get_profile_for_model(clean_id)
+        if profile and hasattr(profile, "context_window") and profile.context_window:
+            if profile.id != "qwen2.5_coder_14b" or clean_base.startswith("qwen2.5-coder:14b"):
+                return profile.context_window
+    except Exception:
+        pass
+
     return default
 
 
 def estimate_required_ram(param_str: str, default: float = 5.0) -> float:
-
     """Estimates required RAM in GB from parameter size string (e.g. '7B', '14B')."""
     match = re.search(r"(\d+(\.\d+)?)\s*B", param_str, re.IGNORECASE)
     if match:
@@ -232,9 +151,9 @@ def estimate_required_ram(param_str: str, default: float = 5.0) -> float:
         elif params_b <= 9.0:
             return 5.5
         elif params_b <= 16.0:
-            return 10.5
+            return 10.0
         elif params_b <= 35.0:
-            return 22.0
+            return 18.5
         elif params_b <= 75.0:
             return 45.0
         else:
@@ -275,41 +194,42 @@ def evaluate_compatibility(required_ram_gb: float, hardware_info: Dict[str, Any]
         }
 
 
-
 def build_model_catalog(
     installed_tags: List[Dict[str, Any]],
     hardware_info: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
     """
-    Combines curated models with installed Ollama models and attaches
+    Combines the supported curated models with installed Ollama tags and attaches
     hardware compatibility evaluations.
     """
     # Map installed models by normalized name / tag
     installed_map: Dict[str, Dict[str, Any]] = {}
     for item in installed_tags:
-        name = item.get("name") or item.get("model") or ""
+        name = (item.get("name") or item.get("model") or "").lower()
         if name:
             installed_map[name] = item
-            # Also map without ':latest' if applicable
             if name.endswith(":latest"):
                 installed_map[name[:-7]] = item
 
     catalog: List[Dict[str, Any]] = []
-    seen_ids = set()
 
-    # 1. Process Curated Models
     for cm in CURATED_MODELS:
         m_id = cm["id"]
-        seen_ids.add(m_id)
+        aliases = [a.lower() for a in cm.get("aliases", [])]
+        all_match_keys = [m_id.lower(), f"{m_id.lower()}:latest"] + aliases + [f"{a}:latest" for a in aliases]
 
-        # Check if installed
-        is_installed = m_id in installed_map or f"{m_id}:latest" in installed_map
-        installed_info = installed_map.get(m_id) or installed_map.get(f"{m_id}:latest") or {}
+        is_installed = False
+        installed_info: Dict[str, Any] = {}
+        for key in all_match_keys:
+            if key in installed_map:
+                is_installed = True
+                installed_info = installed_map[key]
+                break
 
         compat = evaluate_compatibility(cm["required_ram_gb"], hardware_info)
 
-        catalog.append({
-            **cm,
+        catalog_entry = {k: v for k, v in cm.items() if k != "aliases"}
+        catalog_entry.update({
             "installed": is_installed,
             "installed_size_bytes": installed_info.get("size", 0),
             "modified_at": installed_info.get("modified_at"),
@@ -320,42 +240,6 @@ def build_model_catalog(
             "can_run": compat["can_run"],
             "is_curated": True,
         })
-
-    # 2. Add any custom installed models in Ollama that were not in curated list
-    for name, info in installed_map.items():
-        if name in seen_ids or f"{name}:latest" in seen_ids:
-            continue
-        # Avoid duplicate entries for ':latest' aliases
-        base_name = name[:-7] if name.endswith(":latest") else name
-        if base_name in seen_ids:
-            continue
-
-        seen_ids.add(name)
-        seen_ids.add(base_name)
-
-        details = info.get("details", {})
-        param_size = details.get("parameter_size", "Unknown")
-        req_ram = estimate_required_ram(param_size, default=6.0)
-        compat = evaluate_compatibility(req_ram, hardware_info)
-
-        catalog.append({
-            "id": name,
-            "name": name,
-            "param_size": param_size,
-            "required_ram_gb": req_ram,
-            "context_length": str(details.get("context_length", "32k")),
-            "description": f"Locally installed Ollama model ({param_size}).",
-            "tags": ["Custom Local"],
-            "is_default": False,
-            "installed": True,
-            "installed_size_bytes": info.get("size", 0),
-            "modified_at": info.get("modified_at"),
-            "compatibility": compat["tier"],
-            "compatibility_badge": compat["badge"],
-            "compatibility_label": compat["label"],
-            "compatibility_reason": compat["reason"],
-            "can_run": compat["can_run"],
-            "is_curated": False,
-        })
+        catalog.append(catalog_entry)
 
     return catalog

@@ -5,7 +5,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "read_file",
-            "description": "Read the contents of a file with line numbers, optionally sliced by a line range. Use this before edit_file to inspect exact lines and surrounding code context.",
+            "description": "Read the contents of a file with line numbers, optionally sliced by a line range (maximum 250 lines per call). Unbounded reads are automatically clamped to 250 lines with pagination notices.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -19,7 +19,7 @@ TOOL_SCHEMAS = [
                     },
                     "end_line": {
                         "type": "integer",
-                        "description": "Optional 1-indexed ending line number (default: end of file).",
+                        "description": "Optional 1-indexed ending line number (default: min(start_line + 249, end of file); maximum 250 lines per call).",
                     },
                 },
                 "required": ["file_path"],
@@ -214,6 +214,31 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "locate_files_by_pattern",
+            "description": "Explore the repository topology as a hierarchical visual file tree up to a limited depth, without reading file contents. Ideal for rapid architectural discovery.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "directory": {
+                        "type": "string",
+                        "description": "The relative path to the directory to explore (default: '.').",
+                    },
+                    "max_depth": {
+                        "type": "integer",
+                        "description": "Maximum directory traversal depth (default: 3, max: 10).",
+                    },
+                    "pattern": {
+                        "type": "string",
+                        "description": "File pattern to filter results (e.g. '*.js', '*.jsx', default: '*').",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "lint_javascript",
             "description": "Run a static syntax and import validation check on JavaScript/JSX/TypeScript files. Call this before finish to verify zero syntax errors or broken imports in your code.",
             "parameters": {
@@ -376,7 +401,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "execute_command",
-            "description": "Execute a shell command in the project directory. Use this to install ANY needed npm packages (e.g. 'npm install recharts framer-motion canvas-confetti axios') before importing them, or run build/audit scripts.",
+            "description": "Execute a shell command strictly within the current project directory. Use this to install ANY needed npm packages (e.g. 'npm install recharts framer-motion canvas-confetti axios') before importing them, or run build/audit scripts. Commands must run strictly within the current app project directory; executing commands outside the project folder or using path traversal is strictly forbidden.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -445,14 +470,14 @@ TOOL_SCHEMAS = [
                 "properties": {
                     "url": {
                         "type": "string",
-                        "description": "The local application URL to test (e.g. 'http://localhost:5173').",
+                        "description": "Optional: Target web application URL to test. Defaults automatically to the active live preview server (e.g. 'http://localhost:3000').",
                     },
                     "instructions": {
                         "type": "string",
                         "description": "Detailed plain-text instructions on what user flows, buttons, and views to test.",
                     },
                 },
-                "required": ["url", "instructions"],
+                "required": ["instructions"],
             },
         },
     },
@@ -477,5 +502,125 @@ TOOL_SCHEMAS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "mount_file",
+            "description": "Mounts an active workspace file into Dynamic Virtual RAM. The file remains pinned in your working memory across multiple conversation turns without needing to re-read it. It automatically updates whenever edited. Strictly capped at 60% of the context window.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "The relative path to the workspace file to mount into Virtual RAM (e.g. 'src/App.jsx').",
+                    },
+                },
+                "required": ["file_path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "unmount_file",
+            "description": "Unmounts an active workspace file from Dynamic Virtual RAM, releasing working memory attention and token budget.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "The relative path to the mounted file to remove from Virtual RAM (e.g. 'src/App.jsx').",
+                    },
+                },
+                "required": ["file_path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "close_file",
+            "description": "Alias for unmount_file. Unmounts an active workspace file from Dynamic Virtual RAM, releasing working memory attention and token budget.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "The relative path to the mounted file to remove from Virtual RAM (e.g. 'src/App.jsx').",
+                    },
+                },
+                "required": ["file_path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_mounted_files",
+            "description": "Lists all files currently mounted in Dynamic Virtual RAM, along with their line counts, token usage, and remaining budget capacity.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "extract_signatures",
+            "description": "Extracts structural code signatures (classes, methods, functions, Express routes, interfaces, exports, docstrings) from Python, JavaScript, TypeScript, or JSX files, stripping interior execution bodies. Saves 80-90% of tokens while retaining full architectural awareness.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "The relative path to the source code file to extract signatures from (e.g. 'server/index.js', 'src/App.jsx', 'app.py').",
+                    },
+                },
+                "required": ["file_path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "map_dependencies",
+            "description": "Maps repository import/export relationships across the workspace. When target_file is provided, performs an impact analysis detailing what the file imports, what it exports, and all downstream files that depend on it. When target_file is omitted, returns a complete workspace dependency topology map.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target_file": {
+                        "type": "string",
+                        "description": "Optional relative path to a specific file to audit for dependencies and downstream impact (e.g. 'src/components/TodoItem.jsx', 'server/routes/items.js'). If omitted, maps the entire workspace.",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_web",
+            "description": "Search the web using DuckDuckGo for live documentation, APIs, error solutions, or technical references without API keys.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query to look up (e.g. 'FastAPI lifespan handlers', 'Tailwind v4 grid syntax').",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum number of search results to return (default: 5, range: 1-10).",
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
 ]
+
+
 

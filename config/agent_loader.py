@@ -22,8 +22,16 @@ ALL_STANDARD_TOOLS: List[str] = [
     "edit_file",
     "insert_text",
     "list_directory",
+    "locate_files_by_pattern",
+    "extract_signatures",
+    "map_dependencies",
+    "mount_file",
+    "unmount_file",
+    "close_file",
+    "list_mounted_files",
     "lint_javascript",
     "get_assets",
+    "search_web",
     "ask_human",
     "finish",
     "execute_command",
@@ -50,11 +58,12 @@ class AgentProfile:
     name: str
     tier: int
     context_window: int = 32000
-    max_iterations: int = 30
+    max_iterations: int = 100
     prompt_id: str = "master_agent"
     is_reasoning_model: bool = False
     strip_think_tags: bool = False
     text_fallback_parser: bool = True
+    supports_native_tools: bool = True
     whitelisted_tools: List[str] = field(default_factory=lambda: list(ALL_STANDARD_TOOLS))
     enabled_subagents: List[str] = field(default_factory=lambda: list(ALL_SUBAGENTS))
     target_models: List[str] = field(default_factory=list)
@@ -103,7 +112,7 @@ class AgentLoader:
     @classmethod
     def get_profile_for_model(cls, model_name: str) -> AgentProfile:
         """
-        Resolves a model name (e.g. 'qwen2.5-coder:7b', 'deepseek-r1:8b', 'qwen2.5-coder:32b')
+        Resolves a model name (e.g. 'qwen2.5-coder:14b', 'deepseek-coder-v2:16b', 'qwen3-coder:30b-a3b')
         to its tailored AgentProfile.
         """
         if not cls._cache:
@@ -117,29 +126,34 @@ class AgentLoader:
             if profile_id in cls._cache:
                 return cls._cache[profile_id]
 
-        # 2. Pattern Matching Heuristics
-        # Reasoning models (R1)
-        if "r1" in clean_name or "reasoner" in clean_name or "deepseek-r1" in clean_name:
-            return cls._cache.get("deepseek_r1_reasoning", cls._fallback_profile())
+        # 2. Pattern Matching Heuristics for supported models
+        # DeepSeek-Coder-V2-Lite
+        if "deepseek" in clean_name:
+            if "deepseek_coder_v2_lite" in cls._cache:
+                return cls._cache["deepseek_coder_v2_lite"]
 
-        # Cloud Frontier Models (claude, gpt, opus, sonnet, gemini)
-        if any(s in clean_name for s in ["claude", "gpt", "opus", "sonnet", "gemini"]):
-            return cls._cache.get("cloud_frontier", cls._cache.get("qwen2.5_coder_14b_32b", cls._fallback_profile()))
+        # Meta Muse-Glimmer-30B
+        if "glimmer" in clean_name or "muse" in clean_name:
+            if "muse_glimmer_30b" in cls._cache:
+                return cls._cache["muse_glimmer_30b"]
 
-        # Codestral Models
-        if "codestral" in clean_name:
-            return cls._cache.get("codestral_22b", cls._cache.get("qwen2.5_coder_14b_32b", cls._fallback_profile()))
+        # Qwen3-Coder-30B-A3B
+        if "qwen3" in clean_name or "30b" in clean_name or "a3b" in clean_name:
+            if "qwen3_coder_30b" in cls._cache:
+                return cls._cache["qwen3_coder_30b"]
 
-        # Workstation & Intermediate Models (14b, 15b, 16b, 13b, 32b, 34b, 35b, 70b)
-        if any(s in clean_name for s in ["14b", "15b", "16b", "13b", "32b", "34b", "35b", "70b"]):
-            return cls._cache.get("qwen2.5_coder_14b_32b", cls._fallback_profile())
+        # Qwen 2.5 Coder 7B
+        if "7b" in clean_name:
+            if "qwen2.5_coder_7b" in cls._cache:
+                return cls._cache["qwen2.5_coder_7b"]
 
-        # Ultra-Lightweight Models (1.5b, 3b, tiny)
-        if any(s in clean_name for s in ["1.5b", "3b", "tiny"]):
-            return cls._cache.get("qwen2.5_coder_1.5b_3b", cls._cache.get("qwen2.5_coder_7b", cls._fallback_profile()))
+        # Qwen 2.5 Coder 14B
+        if "14b" in clean_name or "qwen2.5" in clean_name or "qwen" in clean_name:
+            if "qwen2.5_coder_14b" in cls._cache:
+                return cls._cache["qwen2.5_coder_14b"]
 
-        # Default: Standard 7B Flagship
-        return cls._cache.get("qwen2.5_coder_7b", cls._fallback_profile())
+        # Default fallback: Qwen 2.5 Coder 14B Flagship
+        return cls._cache.get("qwen2.5_coder_14b", cls._fallback_profile())
 
     @classmethod
     def _parse_yaml_file(cls, path: Path) -> Optional[AgentProfile]:
@@ -156,18 +170,27 @@ class AgentLoader:
         metadata = data.get("metadata", {})
         spec = data.get("spec", {})
 
+        whitelisted = spec.get("whitelisted_tools")
+        if not whitelisted:
+            whitelisted = list(ALL_STANDARD_TOOLS)
+
+        subagents = spec.get("enabled_subagents")
+        if subagents is None:
+            subagents = list(ALL_SUBAGENTS)
+
         return AgentProfile(
             id=metadata.get("id", path.stem),
             name=metadata.get("name", path.stem),
             tier=spec.get("tier", 1),
             context_window=spec.get("context_window", 32000),
-            max_iterations=spec.get("max_iterations", 30),
-            prompt_id=spec.get("prompt_id", "compact_7b_agent"),
+            max_iterations=spec.get("max_iterations", 100),
+            prompt_id=spec.get("prompt_id", "intermediate_14b_agent"),
             is_reasoning_model=spec.get("is_reasoning_model", False),
             strip_think_tags=spec.get("strip_think_tags", False),
             text_fallback_parser=spec.get("text_fallback_parser", True),
-            whitelisted_tools=spec.get("whitelisted_tools", []),
-            enabled_subagents=spec.get("enabled_subagents", []),
+            supports_native_tools=spec.get("supports_native_tools", True),
+            whitelisted_tools=whitelisted,
+            enabled_subagents=subagents,
             target_models=spec.get("target_models", []),
         )
 
@@ -180,16 +203,13 @@ class AgentLoader:
     def _fallback_profile(cls) -> AgentProfile:
         """Built-in default profile if no YAML files exist."""
         return AgentProfile(
-            id="qwen2.5_coder_7b",
-            name="Qwen 2.5 Coder 7B Standard Flagship",
-            tier=1,
-            context_window=32000,
-            max_iterations=30,
-            whitelisted_tools=[
-                "read_file", "write_file", "write_files", "edit_file",
-                "insert_text", "list_directory", "lint_javascript",
-                "get_assets", "ask_human", "finish", "execute_command",
-                "run_background_command", "stop_background_command"
-            ],
-            enabled_subagents=["invoke_design_agent", "invoke_troubleshoot_agent"],
+            id="qwen2.5_coder_14b",
+            name="Qwen 2.5 Coder 14B Flagship Agent",
+            tier=2,
+            context_window=32768,
+            max_iterations=100,
+            prompt_id="intermediate_14b_agent",
+            whitelisted_tools=list(ALL_STANDARD_TOOLS),
+            enabled_subagents=list(ALL_SUBAGENTS),
+            target_models=["qwen2.5-coder:14b", "qwen2.5-coder:14b-instruct"],
         )

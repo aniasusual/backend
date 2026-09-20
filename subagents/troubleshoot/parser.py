@@ -4,6 +4,7 @@ Handles ANSI stripping, multi-platform stack traces (Node, Vite, Python, Vitest)
 and disambiguates 3rd-party npm packages from local relative component imports.
 """
 
+from pathlib import Path
 import re
 from typing import Optional
 
@@ -21,62 +22,79 @@ class StackTraceParser:
         return cls.ANSI_ESCAPE_RE.sub("", text)
 
     @classmethod
+    def _normalize_path(cls, path_str: str, line: str = "") -> str:
+        """Normalizes path by cleaning slashes and stripping leading workspace/system prefixes."""
+        clean_path = path_str.replace("\\", "/").lstrip("/")
+        parts = clean_path.split("/")
+
+        # If absolute system path, keep relative part starting from the nearest project folder marker
+        common_markers = ["src", "server", "frontend", "backend", "client", "api", "app", "lib", "components", "pages", "routes"]
+        for marker in common_markers:
+            if marker in parts:
+                clean_path = "/".join(parts[parts.index(marker):])
+                break
+        else:
+            # Fall back to retaining at most the last 3 path segments if deeply nested
+            if len(parts) > 3:
+                clean_path = "/".join(parts[-3:])
+
+        return f"{clean_path}:{line}" if line else clean_path
+
+    @classmethod
     def extract_file_location(cls, log: str, fallback_file: str = "") -> str:
         """
-        Extracts the relative file path and line number (e.g. src/App.jsx:42)
+        Extracts a relative file path and line number hint (e.g. 'src/App.jsx:42')
         from stack traces across Node, Vite, Vitest, and Python.
+        Uses generalized regex patterns without hardcoding specific directory structures.
         """
         if not log:
             return fallback_file
 
         clean = cls.strip_ansi(log)
 
-        # 1. Vitest / Jest symbol pointer: ❯ src/components/Header.jsx:12:4
+        # 1. Vitest / Jest pointer: ❯ path/to/file.ext:12:4
         vitest_match = re.search(
-            r"[❯>]\s*([a-zA-Z0-9_\-/\\]+\.(?:jsx|tsx|js|ts|py)):(\d+)(?::\d+)?",
+            r"[❯>]\s*([^\s:()\[\]]+\.(?:jsx|tsx|js|ts|mjs|cjs|py)):(\d+)(?::\d+)?",
             clean,
         )
         if vitest_match:
-            return f"{vitest_match.group(1).replace('\\', '/')}:{vitest_match.group(2)}"
+            return cls._normalize_path(vitest_match.group(1), vitest_match.group(2))
 
-        # 2. Node / Vite / Webpack stack traces:
-        # e.g. "at App (src/App.jsx:42:15)" or "at src/components/Header.jsx:12:4"
-        node_match = re.search(
-            r"(?:at [^\n]*\()?((?:src|server|components|pages|utils|app|lib|routes)/[a-zA-Z0-9_\-/\\]+\.[a-zA-Z0-9]+):(\d+)(?::\d+)?\)?",
-            clean,
-        )
-        if node_match:
-            return f"{node_match.group(1).replace('\\', '/')}:{node_match.group(2)}"
-
-        # 3. Python stack traces: File ".../server.py", line 42, in ...
+        # 2. Python traceback: File "...", line 42
         py_match = re.search(
             r'File\s+["\']([^"\']+\.py)["\'],\s+line\s+(\d+)',
             clean,
         )
         if py_match:
-            file_path = py_match.group(1).replace("\\", "/")
-            # If absolute, retain relative part if inside src or server
-            for prefix in ["src/", "server/", "backend/", "app/"]:
-                if prefix in file_path:
-                    file_path = file_path[file_path.index(prefix):]
-                    break
-            else:
-                file_path = file_path.split("/")[-1]
-            return f"{file_path}:{py_match.group(2)}"
+            return cls._normalize_path(py_match.group(1), py_match.group(2))
 
-        # 4. Vite compiler direct location: /src/App.jsx:42:15
-        vite_direct = re.search(
-            r"(?:^|\s|\()/?((?:src|server)/[a-zA-Z0-9_\-/\\]+\.[a-zA-Z0-9]+):(\d+)(?::\d+)?",
+        # 3. file:/// URI in ES modules or Node stack traces:
+        # e.g. at file:///path/to/server/routes/api.js:42:15
+        file_uri_match = re.search(
+            r"file://(?:localhost)?(/?[^\s:()\[\]]+\.(?:jsx|tsx|js|ts|mjs|cjs|py)):(\d+)(?::\d+)?",
             clean,
-            re.MULTILINE,
         )
-        if vite_direct:
-            return f"{vite_direct.group(1).replace('\\', '/')}:{vite_direct.group(2)}"
+        if file_uri_match:
+            return cls._normalize_path(file_uri_match.group(1), file_uri_match.group(2))
+
+        # 4. Standard JS/TS/Node/Vite stack frames:
+        # e.g. "at App (/path/to/src/App.jsx:42:15)" or "at components/Header.jsx:12:4"
+        frame_match = re.search(
+            r"(?:at\s+(?:[^\n(]*\()?)?([a-zA-Z0-9_\-./\\]+\.(?:jsx|tsx|js|ts|mjs|cjs|py)):(\d+)(?::\d+)?\)?",
+            clean,
+        )
+        if frame_match:
+            raw_path = frame_match.group(1)
+            line = frame_match.group(2)
+            if not raw_path.startswith("node:") and "node_modules" not in raw_path:
+                return cls._normalize_path(raw_path, line)
 
         # 5. Generic file match without line number
-        match_generic = re.search(r"((?:src|server)/[a-zA-Z0-9_\-/\\]+\.[a-zA-Z0-9]+)", clean)
-        if match_generic:
-            return match_generic.group(1).replace("\\", "/")
+        generic_match = re.search(r"([a-zA-Z0-9_\-./\\]+\.(?:jsx|tsx|js|ts|mjs|cjs|py))", clean)
+        if generic_match:
+            raw_path = generic_match.group(1)
+            if not raw_path.startswith("node:") and "node_modules" not in raw_path:
+                return cls._normalize_path(raw_path, "")
 
         return fallback_file
 
@@ -107,9 +125,9 @@ class StackTraceParser:
 - **Issue**: The application is attempting to import `{specifier}`, but the file was not found in the workspace.
 - **Root Cause**: Missing, renamed, or mistyped local component file.
 - **Recommended Fix**:
-  1. Verify whether the component exists under `src/components/` or the expected path.
+  1. Use `glob_files(pattern="*{Path(specifier).stem}*")` or `list_directory` to verify the actual location and casing.
   2. If the component has not yet been built, create it using `write_file(file_path="...", content="...")`.
-  3. Ensure the relative import path in the caller file matches the exact casing and file extension."""
+  3. Ensure the relative import path in the caller file matches the exact casing and extension."""
 
             # 3rd-Party NPM Dependency
             pkg_name = specifier
@@ -127,7 +145,7 @@ class StackTraceParser:
   ```bash
   execute_command(command="npm install {pkg_name}", reason="Install missing dependency {pkg_name}")
   ```
-- **Next Steps**: After installation, restart the dev server with `run_background_command(command="npm run dev")`."""
+- **Next Steps**: Vite HMR will automatically detect the installed package."""
 
         # 2. Port Conflict (EADDRINUSE)
         port_match = re.search(
@@ -139,24 +157,22 @@ class StackTraceParser:
             port = port_match.group(1) or port_match.group(2) or "3000"
             return f"""### 🩺 Root Cause Analysis (RCA): Port Conflict
 - **Issue**: Port `{port}` is already in use by another active process.
-- **Root Cause**: `EADDRINUSE` collision. A previous server or dev instance is still occupying port `{port}`.
+- **Root Cause**: `EADDRINUSE` collision. A previous server process is still occupying port `{port}`.
 - **Recommended Fix**:
-  1. If you have an active background PID, stop it using:
-     `stop_background_command(pid=...)`
-  2. Or start Vite on the next available port:
-     `run_background_command(command="npm run dev -- --port {int(port) + 1}", reason="Start server on alternate port")`"""
+  1. Ensure the Express backend server listens dynamically on `process.env.BACKEND_PORT || 5001`.
+  2. Inspect active processes using `execute_command(command="lsof -i :{port}")` to identify and terminate orphaned processes if needed."""
 
         # 3. CORS Error
         if any(w in clean_log for w in ["CORS", "Access-Control-Allow-Origin", "blocked by CORS policy"]):
             return """### 🩺 Root Cause Analysis (RCA): CORS Security Block
 - **Issue**: Browser blocked a cross-origin API request between frontend and backend.
-- **Root Cause**: Backend server missing CORS middleware or headers for `http://localhost:3000` (or `5173`).
+- **Root Cause**: Backend server missing CORS middleware or headers for the active frontend origin.
 - **Recommended Fix**:
   In your backend server (`server/index.js`), ensure CORS middleware is configured:
   ```javascript
   import cors from 'cors';
-  app.use(cors({ origin: '*', credentials: true }));
+  app.use(cors({ origin: true, credentials: true }));
   ```
-  And install cors if needed: `execute_command(command="npm install cors")`."""
+  And install cors if needed: `execute_command(command="npm install cors", reason="Install cors middleware")`."""
 
         return None

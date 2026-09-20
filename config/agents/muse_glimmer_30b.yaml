@@ -1,21 +1,20 @@
 apiVersion: agents.v1
 kind: Agent
 metadata:
-  id: qwen2.5_coder_7b
-  name: Qwen 2.5 Coder 7B Fast Agent
+  id: muse_glimmer_30b
+  name: Meta Muse Glimmer 30B Agent
   version: 1
-  description: "Ultra-fast code generation and execution with native tool calling, optimized for 16GB machines."
-  tags: [fast, 7b, optimal, local]
+  description: "Meta 30B dense multimodal agentic model with native tool failure recovery, controllable reasoning, and 2B vision encoder."
+  tags: [multimodal, 30b, dense, agentic, failure_recovery, meta]
 
 spec:
-  tier: 1
-  context_window: 32768
+  tier: 3
+  context_window: 131072
   max_iterations: 100
-  prompt_id: "compact_7b_agent"
+  prompt_id: "workstation_32b_agent"
   is_reasoning_model: false
   strip_think_tags: false
   text_fallback_parser: true
-  supports_native_tools: true
 
   whitelisted_tools:
     - glob_files
@@ -51,7 +50,10 @@ spec:
     - invoke_code_reviewer_agent
 
   target_models:
-    - "qwen2.5-coder:7b"
-    - "qwen2.5-coder:7b-instruct"
-    - "qwen2.5-coder:7b-instruct-q4_K_M"
-    - "qwen2.5-coder:latest"
+    - "muse-glimmer:30b"
+    - "muse-glimmer"
+    - "muse-glimmer:latest"
+    - "muse-glimmer:30b-q4_K_M"
+    - "muse-glimmer:30b-instruct"
+    - "muse-glimmer-30b"
+    - "muse_glimmer"

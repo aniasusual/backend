@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import subprocess
 import signal
@@ -50,15 +51,18 @@ class ProcessTools:
     def _is_command_safe(self, command: str) -> str | None:
         """Check if a command is blacklisted for sandbox security."""
         cmd_lower = command.lower()
+
+        # Reject dangerous piped remote script executions
+        if re.search(r"""(?:curl|wget)\b.*\|\s*(?:bash|sh|zsh)\b""", cmd_lower):
+            return "Error: Command rejected due to security policy (remote script execution via pipe)."
+
         blacklist = [
             "sudo ",
             "rm -rf /",
             "chmod 777",
-            "curl ",
             "wget ",
             "npm -g",
             "npm install -g",
-            "../",
         ]
         for bad in blacklist:
             if bad in cmd_lower:
@@ -231,6 +235,10 @@ class ProcessTools:
                 return f"Command is already running in the background with PID {pid}. Logs are in '{existing_log}'."
 
         port = self._find_preferred_or_free_port(3000)
+        backend_preferred = 5001 if port != 5001 else 5002
+        backend_port = self._find_preferred_or_free_port(backend_preferred)
+        if backend_port == port:
+            backend_port = self._find_preferred_or_free_port(port + 1)
 
         try:
             log_path = self.sandbox_path / log_filename
@@ -238,6 +246,7 @@ class ProcessTools:
 
             env = os.environ.copy()
             env["PORT"] = str(port)
+            env["BACKEND_PORT"] = str(backend_port)
 
             process = subprocess.Popen(
                 command,
@@ -254,6 +263,7 @@ class ProcessTools:
                 "command": command,
                 "log_filename": log_filename,
                 "port": port,
+                "backend_port": backend_port,
             }
 
             if self.event_callback:
@@ -261,9 +271,11 @@ class ProcessTools:
                     "type": "preview_ready",
                     "port": port,
                     "url": f"http://localhost:{port}",
+                    "backend_port": backend_port,
+                    "backend_url": f"http://localhost:{backend_port}",
                 })
 
-            return f"Started background process with PID {process.pid} on port {port}. Logs are being written to '{log_filename}'. Use read_file to check its output."
+            return f"Started background process with PID {process.pid} on port {port} (API: {backend_port}). Logs are being written to '{log_filename}'. Use read_file to check its output."
         except Exception as e:
             return f"Error starting background command: {str(e)}"
 
@@ -296,6 +308,23 @@ class ProcessTools:
                     "is_dev_server": info.get("is_dev_server", False),
                 })
         return active
+
+    def get_dev_server_info(self) -> Optional[Dict[str, Any]]:
+        """Returns details of the currently running development server, or None if inactive."""
+        for pid, info in list(self.background_processes.items()):
+            if info["process"].poll() is None and info.get("is_dev_server"):
+                frontend_port = info.get("port")
+                backend_port = info.get("backend_port")
+                return {
+                    "pid": pid,
+                    "command": info["command"],
+                    "port": frontend_port,
+                    "backend_port": backend_port,
+                    "url": f"http://localhost:{frontend_port}" if frontend_port else None,
+                    "backend_url": f"http://localhost:{backend_port}" if backend_port else None,
+                    "is_dev_server": True,
+                }
+        return None
 
     def cleanup(self):
         """Kill all tracked background processes and their child process groups."""

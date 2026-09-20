@@ -22,6 +22,8 @@ from project_manager.manager import ProjectManager
 from project_manager.chat_history import ChatHistoryManager
 from utils.hardware import detect_hardware
 from config.models import build_model_catalog
+from context import ContextManager
+from tools.schemas import TOOL_SCHEMAS
 
 app = FastAPI()
 
@@ -204,20 +206,45 @@ async def websocket_endpoint(websocket: WebSocket):
     active_project = project_manager.get_or_create_project("default")
     session_messages: List[Dict[str, Any]] = ChatHistoryManager.get_llm_messages(active_project.path)
     
+    main_loop = asyncio.get_running_loop()
+
     def sync_send_event(event: dict):
         try:
-            loop = asyncio.get_running_loop()
-            asyncio.run_coroutine_threadsafe(websocket.send_json(event), loop)
+            asyncio.run_coroutine_threadsafe(websocket.send_json(event), main_loop)
             
             # Also update project metadata if it's a preview event
-            if event["type"] == "preview_ready":
+            if event.get("type") == "preview_ready":
                 project_manager.update_meta(active_project.name, port=event.get("port"))
-            elif event["type"] == "preview_stopped":
+            elif event.get("type") == "preview_stopped":
                 project_manager.update_meta(active_project.name, port=None)
+            elif event.get("type") == "virtual_ram_updated":
+                all_schemas = list(TOOL_SCHEMAS.values()) if isinstance(TOOL_SCHEMAS, dict) else TOOL_SCHEMAS
+                active_model = getattr(active_registry, "model_name", DEFAULT_MODEL_ID)
+                ram_telemetry = ContextManager.get_context_telemetry(
+                    messages=session_messages,
+                    model_name=active_model,
+                    tools=all_schemas,
+                    mounted_virtual_ram=getattr(active_registry, "mounted_virtual_ram", {}),
+                )
+                asyncio.run_coroutine_threadsafe(
+                    websocket.send_json({"type": "context_telemetry", "telemetry": ram_telemetry}),
+                    main_loop
+                )
         except Exception as e:
             print(f"Error in event callback: {e}")
         
     active_registry = ToolRegistry(active_project.path, event_callback=sync_send_event)
+    all_schemas = list(TOOL_SCHEMAS.values()) if isinstance(TOOL_SCHEMAS, dict) else TOOL_SCHEMAS
+    connect_telemetry = ContextManager.get_context_telemetry(
+        messages=session_messages,
+        model_name=DEFAULT_MODEL_ID,
+        tools=all_schemas,
+        mounted_virtual_ram=getattr(active_registry, "mounted_virtual_ram", {}),
+    )
+    await websocket.send_json({
+        "type": "context_telemetry",
+        "telemetry": connect_telemetry,
+    })
 
     pending_approvals: Dict[str, asyncio.Future] = {}
     harness_task = None
@@ -300,6 +327,19 @@ async def websocket_endpoint(websocket: WebSocket):
                         "messages": ui_events,
                     })
 
+                    # Send initial context telemetry based on loaded session messages
+                    all_schemas = list(TOOL_SCHEMAS.values()) if isinstance(TOOL_SCHEMAS, dict) else TOOL_SCHEMAS
+                    init_telemetry = ContextManager.get_context_telemetry(
+                        messages=session_messages,
+                        model_name=DEFAULT_MODEL_ID,
+                        tools=all_schemas,
+                        mounted_virtual_ram=getattr(active_registry, "mounted_virtual_ram", {}),
+                    )
+                    await websocket.send_json({
+                        "type": "context_telemetry",
+                        "telemetry": init_telemetry,
+                    })
+
                     # Auto-boot dev server if package.json exists to render preview immediately
                     if (active_project.path / "package.json").exists():
                         try:
@@ -328,9 +368,53 @@ async def websocket_endpoint(websocket: WebSocket):
 
             if message.get("action") == "clear":
                 session_messages.clear()
+                if hasattr(active_registry, "file_tools"):
+                    active_registry.file_tools.mounted_virtual_ram.clear()
                 ChatHistoryManager.clear_history(active_project.path)
                 await websocket.send_json({"type": "chat_history_loaded", "project": active_project.name, "messages": []})
+                all_schemas = list(TOOL_SCHEMAS.values()) if isinstance(TOOL_SCHEMAS, dict) else TOOL_SCHEMAS
+                reset_telemetry = ContextManager.get_context_telemetry(
+                    messages=[],
+                    model_name=DEFAULT_MODEL_ID,
+                    tools=all_schemas,
+                )
+                await websocket.send_json({
+                    "type": "context_telemetry",
+                    "telemetry": reset_telemetry,
+                })
                 await websocket.send_json({"type": "status", "content": "Session context reset."})
+                continue
+
+            if message.get("action") == "set_model":
+                new_model = message.get("model") or DEFAULT_MODEL_ID
+                if hasattr(active_registry, "set_model_name"):
+                    active_registry.set_model_name(new_model)
+                all_schemas = list(TOOL_SCHEMAS.values()) if isinstance(TOOL_SCHEMAS, dict) else TOOL_SCHEMAS
+                model_telemetry = ContextManager.get_context_telemetry(
+                    messages=session_messages,
+                    model_name=new_model,
+                    tools=all_schemas,
+                    mounted_virtual_ram=getattr(active_registry, "mounted_virtual_ram", {}),
+                )
+                await websocket.send_json({
+                    "type": "context_telemetry",
+                    "telemetry": model_telemetry,
+                })
+                continue
+
+            if message.get("action") == "stop_agent":
+                if harness_task and not harness_task.done():
+                    harness_task.cancel()
+                    try:
+                        await harness_task
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception:
+                        pass
+                await websocket.send_json({
+                    "type": "status",
+                    "content": "Stopped: Agent execution stopped by user.",
+                })
                 continue
 
             prompt = message.get("prompt", "")

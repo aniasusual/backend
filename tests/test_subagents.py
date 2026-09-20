@@ -134,6 +134,49 @@ class TestSubagentRunner(unittest.TestCase):
             self.assertTrue(len(tool_events) >= 1)
             self.assertEqual(tool_events[0]["tool"], "read_file")
 
+    def test_runner_telemetry_debug_and_token_metrics(self):
+        """Verify runner captures token metrics, debug payloads, and caches last_run_events."""
+        allowed = {"read_file"}
+        events = []
+        runner = SubagentRunner(
+            name="test_runner",
+            system_prompt="Test system prompt",
+            allowed_tools=allowed,
+            tool_registry=self.registry,
+            event_callback=lambda evt: events.append(evt),
+        )
+
+        with patch("ollama.Client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client_cls.return_value = mock_client
+
+            mock_client.chat.return_value = {
+                "message": {
+                    "role": "assistant",
+                    "content": "Done inspecting.",
+                    "thinking": "Analyzed code cleanly.",
+                    "tool_calls": [],
+                },
+                "prompt_eval_count": 120,
+                "eval_count": 45,
+                "total_duration": 150000000,
+            }
+
+            result = runner.run("Check files")
+            self.assertEqual(result, "Done inspecting.")
+
+            # Verify metrics
+            self.assertEqual(runner.last_run_metrics["prompt_tokens"], 120)
+            self.assertEqual(runner.last_run_metrics["completion_tokens"], 45)
+            self.assertEqual(runner.last_run_metrics["total_tokens"], 165)
+            self.assertGreater(len(runner.last_run_events), 0)
+
+            # Verify debug payload in events
+            finish_evt = next(e for e in runner.last_run_events if e.get("event") == "finish")
+            self.assertIn("debug", finish_evt)
+            self.assertEqual(finish_evt["debug"]["metrics"]["prompt_eval_count"], 120)
+            self.assertEqual(finish_evt["debug"]["metrics"]["eval_count"], 45)
+
 
 class TestTroubleshootSubagent(unittest.TestCase):
     """Unit tests for TroubleshootSubagent."""
@@ -156,10 +199,10 @@ class TestTroubleshootSubagent(unittest.TestCase):
         shutil.rmtree(self.sandbox_path, ignore_errors=True)
 
     def test_read_only_tool_restriction(self):
-        """Verify TroubleshootSubagent only allows read-only tools including glob_files."""
+        """Verify TroubleshootSubagent only allows read-only tools including glob_files and list_directory."""
         self.assertEqual(
             self.subagent.allowed_tools,
-            {"read_file", "view_bulk", "grep_search", "lint_javascript", "glob_files"},
+            {"read_file", "view_bulk", "grep_search", "lint_javascript", "glob_files", "list_directory"},
         )
         self.assertNotIn("write_file", self.subagent.allowed_tools)
         self.assertNotIn("edit_file", self.subagent.allowed_tools)
@@ -193,6 +236,13 @@ class TestTroubleshootSubagent(unittest.TestCase):
         from subagents.troubleshoot import StackTraceParser
         loc = StackTraceParser.extract_file_location(py_log)
         self.assertEqual(loc, "server/server.py:42")
+
+    def test_file_uri_and_arbitrary_folder_extraction(self):
+        """Verify generalized path extraction supports file:// URIs and custom folders without hardcoding."""
+        from subagents.troubleshoot import StackTraceParser
+        esm_log = "Error: boom\n  at file:///Users/animesh/Desktop/work/projects/lowkey/backend/routes/api.js:88:12"
+        loc = StackTraceParser.extract_file_location(esm_log)
+        self.assertEqual(loc, "backend/routes/api.js:88")
 
     def test_deterministic_port_conflict_prefilter(self):
         """Verify fast-path for EADDRINUSE port collision."""
@@ -547,46 +597,141 @@ app.get("/user/:id", async (req, res) => {
             self.assertIn("SQL injection", result)
             self.assertIn("hardcoded API secret", result)
 
-
-class TestUITestingSubagent(unittest.TestCase):
-    """Unit tests for upgraded Goal-Driven Autonomous UITestingSubagent."""
-
-    def setUp(self):
-        self.sandbox_path = PROJECTS_ROOT / f"_test_ui_{uuid.uuid4().hex[:8]}"
-        self.sandbox_path.mkdir(parents=True, exist_ok=True)
-        self.registry = ToolRegistry(self.sandbox_path)
-        from subagents.ui_subagent import UITestingSubagent
-        self.subagent = UITestingSubagent(
-            sandbox_path=self.sandbox_path,
-            tool_registry=self.registry,
-            max_steps=5,
+    def test_models_pydantic_serialization_and_markdown(self):
+        """Verify typed Pydantic models for code reviewer findings and reports."""
+        from subagents.reviewer.models import (
+            FindingSeverity,
+            FindingCategory,
+            ReviewFinding,
+            ReviewAuditReport,
         )
 
-    def tearDown(self):
-        shutil.rmtree(self.sandbox_path, ignore_errors=True)
+        finding = ReviewFinding(
+            file_path="server/db.js",
+            line_number=42,
+            severity=FindingSeverity.CRITICAL,
+            category=FindingCategory.SECURITY,
+            title="SQL Injection",
+            description="Unescaped template literal query parameter",
+            code_snippet="SELECT * FROM users WHERE id = ${req.params.id}",
+            suggested_replacement="db.query('SELECT * FROM users WHERE id = $1', [req.params.id])",
+        )
+        self.assertEqual(finding.line_number, 42)
+        self.assertEqual(finding.severity, FindingSeverity.CRITICAL)
 
-    def test_allowed_tools(self):
-        """Verify testing subagent is scoped to goal-driven browser actions."""
-        expected = {"click", "type", "select", "wait", "assert_text", "navigate", "done"}
-        self.assertEqual(self.subagent.allowed_tools, expected)
+        report = ReviewAuditReport(
+            findings=[finding],
+            inspected_files=["server/db.js"],
+        )
+        report.recalculate()
+        self.assertEqual(report.score, 75)
+        self.assertEqual(report.status, "NEEDS_REVISION")
+        self.assertFalse(report.approved)
 
-    def test_clean_and_parse_action(self):
-        """Verify action parser handles direct JSON, markdown codeblocks, and raw text."""
-        # 1. Plain JSON
-        act1 = self.subagent._clean_and_parse_action('{"action": "click", "id": "el_0"}')
-        self.assertEqual(act1, {"action": "click", "id": "el_0"})
+        markdown = report.to_markdown()
+        self.assertIn("server/db.js:42", markdown)
+        self.assertIn("SQL Injection", markdown)
+        self.assertIn("Recommended Fix", markdown)
 
-        # 2. Markdown wrapped JSON
-        act2 = self.subagent._clean_and_parse_action('```json\n{"action": "type", "id": "el_1", "text": "hello"}\n```')
-        self.assertEqual(act2, {"action": "type", "id": "el_1", "text": "hello"})
+        parsed_report = ReviewAuditReport.from_markdown(markdown, files=["server/db.js"])
+        self.assertEqual(parsed_report.score, 75)
+        self.assertFalse(parsed_report.approved)
 
-        # 3. Embedded text with JSON
-        act3 = self.subagent._clean_and_parse_action('I will click now: {"action": "click", "id": "el_2"}')
-        self.assertEqual(act3, {"action": "click", "id": "el_2"})
+    def test_scan_structured_exact_line_numbers(self):
+        """Verify StaticSecurityScanner.scan_structured detects exact line numbers and code snippets."""
+        from subagents.reviewer import StaticSecurityScanner
+        target = self.sandbox_path / "server" / "api.js"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("""// Line 1
+// Line 2
+const secret_key = "abc123456789xyz";
+// Line 4
+eval("console.log(1)");
+""")
+        findings, score = StaticSecurityScanner.scan_structured(self.sandbox_path, ["server/api.js"])
+        self.assertEqual(len(findings), 2)
+        secret_finding = next((f for f in findings if "Secret" in f.title), None)
+        eval_finding = next((f for f in findings if "eval" in f.title), None)
 
-        # 4. Invalid text
-        act4 = self.subagent._clean_and_parse_action('I am not sure what to do.')
-        self.assertIsNone(act4)
+        self.assertIsNotNone(secret_finding)
+        self.assertEqual(secret_finding.line_number, 3)
+        self.assertIn("secret_key", secret_finding.code_snippet)
+
+        self.assertIsNotNone(eval_finding)
+        self.assertEqual(eval_finding.line_number, 5)
+        self.assertIn("eval(", eval_finding.code_snippet)
+
+    def test_preflight_leads_passed_to_runner(self):
+        """Verify StaticSecurityScanner pre-flight leads are injected into SubagentRunner task prompt."""
+        target = self.sandbox_path / "server" / "vulnerable.js"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text('eval("danger()");\n')
+
+        with patch("subagents.code_reviewer_subagent.SubagentRunner") as mock_runner_cls:
+            mock_runner = MagicMock()
+            mock_runner_cls.return_value = mock_runner
+            mock_runner.run.return_value = "# 🧐 Code Review & Security Audit\n**Overall Code Quality Score**: **95/100**\n**Status**: **APPROVED**\n"
+
+            self.subagent.review_code(target_files=["server/vulnerable.js"])
+            mock_runner.run.assert_called_once()
+            called_prompt = mock_runner.run.call_args[0][0]
+            self.assertIn("PRE-FLIGHT STATIC SCANNER LEADS", called_prompt)
+            self.assertIn("server/vulnerable.js:1", called_prompt)
+            self.assertIn("Dangerous `eval()`", called_prompt)
+            self.assertIsNotNone(self.subagent.last_report)
+            self.assertEqual(self.subagent.last_report.score, 95)
+            self.assertTrue(self.subagent.last_report.approved)
+
+    def test_subagent_runner_fallback_message_formatting(self):
+        """Verify text-fallback tool calls append tool responses as role 'user' without chat template crashes."""
+        from subagents.runner import SubagentRunner
+        runner = SubagentRunner(
+            name="test_runner",
+            system_prompt="Test system",
+            allowed_tools={"read_file"},
+            tool_registry=self.registry,
+        )
+
+        with patch("ollama.Client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client_cls.return_value = mock_client
+            # Turn 1: model returns markdown fallback JSON for read_file
+            # Turn 2: model returns final conclusion
+            mock_client.chat.side_effect = [
+                {
+                    "message": {
+                        "content": '```json\n{"name": "read_file", "arguments": {"file_path": "src/api.js"}}\n```',
+                        "tool_calls": [],
+                    },
+                    "prompt_eval_count": 10,
+                    "eval_count": 20,
+                    "total_duration": 1e8,
+                },
+                {
+                    "message": {
+                        "content": "Audit complete. No additional issues found.",
+                        "tool_calls": [],
+                    },
+                    "prompt_eval_count": 15,
+                    "eval_count": 25,
+                    "total_duration": 1e8,
+                },
+            ]
+
+            report = runner.run("Inspect src/api.js")
+            self.assertIn("Audit complete", report)
+
+            # Verify that the tool response in messages history was formatted with role: "user"
+            # because native tool_calls was empty (fallback parsing)
+            second_chat_call_messages = mock_client.chat.call_args_list[1][1]["messages"]
+            tool_result_msg = next((m for m in second_chat_call_messages if "[Tool Result for 'read_file']" in m.get("content", "")), None)
+            self.assertIsNotNone(tool_result_msg)
+            self.assertEqual(tool_result_msg["role"], "user")
+            self.assertNotIn("tool", [m["role"] for m in second_chat_call_messages])
+
+
+class TestBrowserTestingPrimitives(unittest.TestCase):
+    """Unit tests for browser testing primitives (console noise filtering, DOM observer formatting)."""
 
     def test_console_log_noise_filtering(self):
         """Verify Emergent-style console log noise filter."""
@@ -627,90 +772,9 @@ class TestUITestingSubagent(unittest.TestCase):
         self.assertIn("[Step 1/5]", formatted)
         self.assertIn("Test App", formatted)
         self.assertIn("Invalid credentials", formatted)
-        self.assertIn("[el_0] <button> \"Submit\"", formatted)
-        self.assertIn("testid='btn-submit'", formatted)
+        self.assertIn("Submit", formatted)
         self.assertIn("401 Unauthorized", formatted)
 
-    def test_connection_error_handling(self):
-        """Verify graceful error reporting when preview URL is unreachable."""
-        with patch("subagents.ui_subagent.PlaywrightBrowserSession") as mock_session_cls:
-            mock_session = MagicMock()
-            mock_session_cls.return_value = mock_session
-            mock_session.start.return_value = (False, "Connection refused at 127.0.0.1:9999")
-
-            report = self.subagent.run_ui_test("http://localhost:9999", "Check page")
-            self.assertIn("UI Test Failed: Connection Error", report)
-            self.assertIn("Connection refused", report)
-
-    def test_autonomous_interaction_loop_success(self):
-        """Verify multi-turn autonomous interaction loop and structured report."""
-        with patch("subagents.ui_subagent.PlaywrightBrowserSession") as mock_session_cls, \
-             patch("subagents.ui_subagent.DOMObserver") as mock_observer, \
-             patch("ollama.Client") as mock_ollama_cls:
-
-            mock_session = MagicMock()
-            mock_session_cls.return_value = mock_session
-            mock_session.start.return_value = (True, "")
-            mock_session.console_errors = []
-            mock_session.network_failures = []
-            mock_session.actions_executed = ["Clicked 'el_0' (Click login button)"]
-
-            mock_observer.observe.return_value = {
-                "url": "http://localhost:5173",
-                "title": "Welcome Dashboard",
-                "elements": [{"id": "el_0", "tag": "button", "type": "button", "text": "Login"}],
-                "dom_errors": [],
-            }
-            mock_observer.format_observation_for_llm.return_value = "Observation prompt"
-
-            mock_client = MagicMock()
-            mock_ollama_cls.return_value = mock_client
-
-            # Step 1: click login, Step 2: done
-            mock_client.chat.side_effect = [
-                {"message": {"content": '{"action": "click", "id": "el_0", "reason": "Click login button"}'}},
-                {"message": {"content": '{"action": "done", "status": "PASSED", "report": "Login flow verified successfully."}'}},
-            ]
-
-            report = self.subagent.run_ui_test("http://localhost:5173", "Test login")
-
-            self.assertIn("UI Test Report — ✅ PASSED", report)
-            self.assertIn("Welcome Dashboard", report)
-            self.assertIn("Login flow verified successfully.", report)
-            mock_session.execute_action.assert_called_once()
-            mock_session.close.assert_called()
-
-    def test_deterministic_smoke_fallback_on_llm_error(self):
-        """Verify fallback to deterministic smoke test when LLM errors out."""
-        with patch("subagents.ui_subagent.PlaywrightBrowserSession") as mock_session_cls, \
-             patch("subagents.ui_subagent.DOMObserver") as mock_observer, \
-             patch("ollama.Client") as mock_ollama_cls:
-
-            mock_session = MagicMock()
-            mock_session_cls.return_value = mock_session
-            mock_session.start.return_value = (True, "")
-            mock_session.console_errors = []
-            mock_session.network_failures = []
-            mock_session.actions_executed = []
-
-            mock_observer.observe.return_value = {
-                "url": "http://localhost:5173",
-                "title": "App Title",
-                "elements": [{"id": "el_0", "tag": "button", "type": "button", "text": "Get Started"}],
-                "dom_errors": [],
-            }
-            mock_observer.format_observation_for_llm.return_value = "Observation prompt"
-
-            mock_client = MagicMock()
-            mock_ollama_cls.return_value = mock_client
-            mock_client.chat.side_effect = RuntimeError("Ollama connection refused")
-
-            report = self.subagent.run_ui_test("http://localhost:5173", "Smoke test")
-
-            self.assertIn("Automated Deterministic Smoke Test (Resilient Fallback)", report)
-            self.assertIn("App Title", report)
-            self.assertIn("Get Started", report)
-            mock_session.close.assert_called()
 
 
 class TestVisionExpertSubagent(unittest.TestCase):
@@ -816,10 +880,382 @@ export default function App() {
             self.assertIn("src/App.jsx", report)
 
 
+class TestUITestingSubagent(unittest.TestCase):
+    """Unit tests for the overhauled UITestingSubagent."""
+
+    def setUp(self):
+        from subagents.ui_subagent import UITestingSubagent
+        self.subagent = UITestingSubagent(max_steps=5)
+
+    @patch("subagents.ui_subagent.PlaywrightBrowserSession")
+    def test_ui_subagent_unreachable_server(self, mock_session_cls):
+        """Verify that an unreachable server returns an honest failure without fake smoke data."""
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+        mock_session.start.return_value = (False, "Connection refused at 127.0.0.1:5173")
+
+        report = self.subagent.run_ui_test("http://localhost:5173", "Verify landing page")
+        self.assertIn("❌ UI Test Failed: Application Unreachable", report)
+        self.assertIn("Connection refused at 127.0.0.1:5173", report)
+        self.assertIn("Do not attempt to run `npm run dev`", report)
+
+    @patch("subagents.ui_subagent.DOMObserver")
+    @patch("subagents.ui_subagent.ollama.Client")
+    @patch("subagents.ui_subagent.PlaywrightBrowserSession")
+    def test_ui_subagent_native_tool_call_flow(self, mock_session_cls, mock_ollama_cls, mock_observer_cls):
+        """Verify multi-turn tool-calling loop executes actions and compiles a real-time report."""
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+        mock_session.start.return_value = (True, "")
+        mock_session.console_errors = []
+        mock_session.network_failures = []
+        mock_session.actions_executed = ["Clicked 'el_0' (Click submit button)"]
+
+        mock_observer_cls.observe.return_value = {
+            "url": "http://localhost:5173",
+            "title": "Task Manager",
+            "elements": [{"id": "el_0", "tag": "button", "text": "Submit Task"}],
+            "dom_errors": [],
+            "can_scroll_down": False,
+        }
+        mock_observer_cls.format_observation_for_llm.return_value = "Mock Observation"
+
+        mock_client = MagicMock()
+        mock_ollama_cls.return_value = mock_client
+
+        # Turn 1: browser_click, Turn 2: browser_finish
+        mock_client.chat.side_effect = [
+            {
+                "message": {
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "browser_click",
+                                "arguments": {"id": "el_0", "reason": "Click submit button"},
+                            }
+                        }
+                    ],
+                }
+            },
+            {
+                "message": {
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "browser_finish",
+                                "arguments": {
+                                    "status": "PASSED",
+                                    "report": "Form submit verified successfully.",
+                                    "fix_instructions": "None",
+                                },
+                            }
+                        }
+                    ],
+                }
+            },
+        ]
+
+        report = self.subagent.run_ui_test("http://localhost:5173", "Verify submit task")
+        mock_session.execute_action.assert_called_once_with({"name": "click", "arguments": {"id": "el_0", "reason": "Click submit button"}})
+        self.assertIn("✅ PASSED", report)
+        self.assertIn("Form submit verified successfully.", report)
+        self.assertIn("Task Manager", report)
+        self.assertIn("Visual Snapshot", report)
+        mock_session.take_screenshot.assert_called_once()
+        mock_session.close.assert_called_once()
+
+    @patch("subagents.ui_subagent.DOMObserver")
+    @patch("subagents.ui_subagent.ollama.Client")
+    @patch("subagents.ui_subagent.PlaywrightBrowserSession")
+    def test_ui_subagent_turn_one_retry_not_aborted(self, mock_session_cls, mock_ollama_cls, mock_observer_cls):
+        """Verify that conversational text on turn 1 does NOT abort, but prompts a retry."""
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+        mock_session.start.return_value = (True, "")
+        mock_session.console_errors = []
+        mock_session.network_failures = []
+        mock_session.actions_executed = []
+
+        mock_observer_cls.observe.return_value = {
+            "url": "http://localhost:5173",
+            "title": "App",
+            "elements": [{"id": "el_0", "tag": "button", "text": "Save"}],
+            "dom_errors": [],
+            "can_scroll_down": False,
+        }
+        mock_observer_cls.format_observation_for_llm.return_value = "Mock Observation"
+
+        mock_client = MagicMock()
+        mock_ollama_cls.return_value = mock_client
+
+        # Turn 1: Conversational text (no tool call)
+        # Turn 2: Valid tool call
+        # Turn 3: browser_finish
+        mock_client.chat.side_effect = [
+            {
+                "message": {
+                    "content": "I am thinking about clicking the Save button.",
+                    "tool_calls": [],
+                }
+            },
+            {
+                "message": {
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "browser_click",
+                                "arguments": {"id": "el_0", "reason": "Click save"},
+                            }
+                        }
+                    ],
+                }
+            },
+            {
+                "message": {
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "browser_finish",
+                                "arguments": {
+                                    "status": "PASSED",
+                                    "report": "Save flow tested after retry.",
+                                },
+                            }
+                        }
+                    ],
+                }
+            },
+        ]
+
+        report = self.subagent.run_ui_test("http://localhost:5173", "Test save")
+        self.assertIn("✅ PASSED", report)
+        self.assertIn("Save flow tested after retry.", report)
+        self.assertEqual(mock_session.execute_action.call_count, 1)
+
+    @patch("subagents.ui_subagent.DOMObserver")
+    @patch("subagents.ui_subagent.ollama.Client")
+    @patch("subagents.ui_subagent.PlaywrightBrowserSession")
+    def test_ui_subagent_reports_real_errors(self, mock_session_cls, mock_ollama_cls, mock_observer_cls):
+        """Verify that live console crashes and network errors are reported with ❌ FAILED."""
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+        mock_session.start.return_value = (True, "")
+        mock_session.console_errors = ["[CRASH] TypeError: Cannot read properties of undefined (reading 'map')"]
+        mock_session.network_failures = ["[NET_FAIL] POST http://localhost:8000/api/items - 500 Internal Server Error"]
+        mock_session.actions_executed = ["Clicked 'el_0'"]
+
+        mock_observer_cls.observe.return_value = {
+            "url": "http://localhost:5173",
+            "title": "Error App",
+            "elements": [],
+            "dom_errors": ["Error loading items"],
+            "can_scroll_down": False,
+        }
+        mock_observer_cls.format_observation_for_llm.return_value = "Mock Observation"
+
+        mock_client = MagicMock()
+        mock_ollama_cls.return_value = mock_client
+
+        mock_client.chat.return_value = {
+            "message": {
+                "content": "",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "browser_finish",
+                            "arguments": {
+                                "status": "FAILED",
+                                "report": "API 500 error triggered on load.",
+                                "fix_instructions": "Fix null check in ItemList.jsx",
+                            },
+                        }
+                    }
+                ],
+            }
+        }
+
+        report = self.subagent.run_ui_test("http://localhost:5173", "Test item load")
+        self.assertIn("❌ FAILED", report)
+        self.assertIn("TypeError: Cannot read properties of undefined", report)
+        self.assertIn("500 Internal Server Error", report)
+        self.assertIn("Fix null check in ItemList.jsx", report)
+
+    @patch("subagents.ui_subagent.DOMObserver")
+    @patch("subagents.ui_subagent.ollama.Client")
+    @patch("subagents.ui_subagent.PlaywrightBrowserSession")
+    def test_ui_subagent_advanced_tools_dispatch(self, mock_session_cls, mock_ollama_cls, mock_observer_cls):
+        """Verify that advanced tools (hover, drag_and_drop, press_key, upload_file) dispatch to Playwright."""
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+        mock_session.start.return_value = (True, "")
+        mock_session.console_errors = []
+        mock_session.network_failures = []
+        mock_session.actions_executed = []
+
+        mock_observer_cls.observe.return_value = {
+            "url": "http://localhost:5173",
+            "title": "Kanban App",
+            "elements": [{"id": "el_1", "tag": "div", "text": "Card"}, {"id": "el_2", "tag": "div", "text": "Column"}],
+            "dom_errors": [],
+            "can_scroll_down": False,
+        }
+        mock_observer_cls.format_observation_for_llm.return_value = "Mock Observation"
+
+        mock_client = MagicMock()
+        mock_ollama_cls.return_value = mock_client
+
+        # Sequence: hover -> drag_and_drop -> press_key -> finish
+        mock_client.chat.side_effect = [
+            {
+                "message": {
+                    "content": "",
+                    "tool_calls": [{"function": {"name": "browser_hover", "arguments": {"id": "el_1", "reason": "preview tooltip"}}}],
+                }
+            },
+            {
+                "message": {
+                    "content": "",
+                    "tool_calls": [{"function": {"name": "browser_drag_and_drop", "arguments": {"source_id": "el_1", "target_id": "el_2", "reason": "move card"}}}],
+                }
+            },
+            {
+                "message": {
+                    "content": "",
+                    "tool_calls": [{"function": {"name": "browser_press_key", "arguments": {"key": "Escape", "reason": "close modal"}}}],
+                }
+            },
+            {
+                "message": {
+                    "content": "",
+                    "tool_calls": [{"function": {"name": "browser_finish", "arguments": {"status": "PASSED", "report": "All advanced interactions verified"}}}],
+                }
+            },
+        ]
+
+        report = self.subagent.run_ui_test("http://localhost:5173", "Test Kanban interactions")
+        self.assertIn("✅ PASSED", report)
+        self.assertIn("All advanced interactions verified", report)
+class TestDynamicSubagentToolProvisioning(unittest.TestCase):
+    """Unit tests for Approach B: dynamic subagent tool configuration and provisioning."""
+
+    def setUp(self):
+        self.sandbox_path = PROJECTS_ROOT / f"_test_dyn_tools_{uuid.uuid4().hex[:8]}"
+        self.sandbox_path.mkdir(parents=True, exist_ok=True)
+        self.registry = ToolRegistry(sandbox_dir=self.sandbox_path)
+
+    def tearDown(self):
+        shutil.rmtree(self.sandbox_path, ignore_errors=True)
+
+    def test_base_subagent_tool_normalization(self):
+        """Verify BaseSubagent correctly normalizes list, set, and comma-separated string."""
+        from subagents.base import BaseSubagent
+
+        class DummySubagent(BaseSubagent):
+            @property
+            def default_allowed_tools(self) -> set[str]:
+                return {"default_tool_1", "default_tool_2"}
+
+        # 1. Default fallback
+        dummy = DummySubagent(sandbox_path=self.sandbox_path)
+        self.assertEqual(dummy.allowed_tools, {"default_tool_1", "default_tool_2"})
+
+        # 2. List input
+        dummy_list = DummySubagent(sandbox_path=self.sandbox_path, allowed_tools=["read_file", "grep_search"])
+        self.assertEqual(dummy_list.allowed_tools, {"read_file", "grep_search"})
+
+        # 3. Comma-separated string
+        dummy_str = DummySubagent(sandbox_path=self.sandbox_path, allowed_tools="read_file, locate_files_by_pattern")
+        self.assertEqual(dummy_str.allowed_tools, {"read_file", "locate_files_by_pattern"})
+
+        # 4. Property setter mutation
+        dummy.allowed_tools = ["write_file", "view_bulk"]
+        self.assertEqual(dummy.allowed_tools, {"write_file", "view_bulk"})
+
+        # 5. Property setter reset to default
+        dummy.allowed_tools = None
+        self.assertEqual(dummy.allowed_tools, {"default_tool_1", "default_tool_2"})
+
+    def test_subclasses_constructor_override(self):
+        """Verify domain subagents accept custom allowed_tools in their constructors."""
+        from subagents.code_reviewer_subagent import CodeReviewerSubagent
+        from subagents.design_subagent import DesignSubagent
+
+        custom_tools = {"read_file", "locate_files_by_pattern"}
+
+        troubleshoot = TroubleshootSubagent(
+            sandbox_path=self.sandbox_path,
+            tool_registry=self.registry,
+            allowed_tools=custom_tools,
+        )
+        self.assertEqual(troubleshoot.allowed_tools, custom_tools)
+
+        reviewer = CodeReviewerSubagent(
+            sandbox_path=self.sandbox_path,
+            tool_registry=self.registry,
+            allowed_tools=["read_file", "locate_files_by_pattern"],
+        )
+        self.assertEqual(reviewer.allowed_tools, custom_tools)
+
+        design = DesignSubagent(
+            sandbox_path=self.sandbox_path,
+            tool_registry=self.registry,
+            allowed_tools="read_file, write_file",
+        )
+        self.assertEqual(design.allowed_tools, {"read_file", "write_file"})
+
+    def test_tool_registry_subagent_tools_injection(self):
+        """Verify ToolRegistry initializes subagents with custom tools if provided in subagent_tools."""
+        reg = ToolRegistry(
+            sandbox_dir=self.sandbox_path,
+            subagent_tools={
+                "troubleshoot": ["read_file", "locate_files_by_pattern"],
+                "invoke_design_agent": {"write_file"},
+            },
+        )
+        self.assertEqual(reg.troubleshoot_subagent.allowed_tools, {"read_file", "locate_files_by_pattern"})
+        self.assertEqual(reg.design_subagent.allowed_tools, {"write_file"})
+        # Other subagents retain default tools
+        self.assertIn("lint_javascript", reg.code_reviewer_subagent.allowed_tools)
+
+    def test_tool_registry_configure_subagent_tools(self):
+        """Verify ToolRegistry.configure_subagent_tools dynamically modifies subagent allowed tools."""
+        self.assertNotIn("locate_files_by_pattern", self.registry.troubleshoot_subagent.allowed_tools)
+
+        self.registry.configure_subagent_tools("troubleshoot", {"read_file", "locate_files_by_pattern"})
+        self.assertEqual(self.registry.troubleshoot_subagent.allowed_tools, {"read_file", "locate_files_by_pattern"})
+
+        # Check by canonical name and comma-separated string
+        self.registry.configure_subagent_tools("invoke_design_agent", "read_file, locate_files_by_pattern")
+        self.assertEqual(self.registry.design_subagent.allowed_tools, {"read_file", "locate_files_by_pattern"})
+
+    def test_runner_scoped_schemas_with_custom_tools(self):
+        """Verify SubagentRunner filters schemas strictly against custom provided allowed tools."""
+        custom_tools = {"read_file", "locate_files_by_pattern"}
+        troubleshoot = TroubleshootSubagent(
+            sandbox_path=self.sandbox_path,
+            tool_registry=self.registry,
+            allowed_tools=custom_tools,
+        )
+
+        runner = SubagentRunner(
+            name="troubleshoot_custom",
+            system_prompt=troubleshoot.system_prompt,
+            allowed_tools=troubleshoot.allowed_tools,
+            tool_registry=self.registry,
+        )
+
+        scoped_schemas = runner._get_scoped_schemas()
+        schema_names = {s["function"]["name"] for s in scoped_schemas}
+        self.assertEqual(schema_names, custom_tools)
+
+        scoped_tools = runner._get_scoped_tool_map()
+        self.assertEqual(set(scoped_tools.keys()), custom_tools)
+
+
 if __name__ == "__main__":
     unittest.main()
-
-
-
-
 

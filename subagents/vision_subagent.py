@@ -33,7 +33,8 @@ class VisionExpertSubagent(BaseSubagent):
         model_name: str = DEFAULT_MODEL_ID,
         tool_registry: Optional[Any] = None,
         event_callback: Optional[Any] = None,
-        max_iterations: int = 5,
+        max_iterations: int = 40,
+        allowed_tools: Optional[Any] = None,
         **kwargs,
     ):
         super().__init__(
@@ -41,12 +42,13 @@ class VisionExpertSubagent(BaseSubagent):
             model_name=model_name,
             tool_registry=tool_registry,
             event_callback=event_callback,
+            allowed_tools=allowed_tools,
             **kwargs,
         )
         self.max_iterations = max_iterations
 
     @property
-    def allowed_tools(self) -> Set[str]:
+    def default_allowed_tools(self) -> Set[str]:
         """Strictly scoped tools permitted for visual design audit."""
         return {"read_file", "grep_search", "view_bulk", "get_assets"}
 
@@ -95,11 +97,16 @@ Design Intent: {intent_desc}
                 event_callback=self.event_callback,
             )
             result = runner.run(task_description)
+            self.last_run_events = runner.last_run_events
+            self.last_run_metrics = runner.last_run_metrics
 
-            # Check for non-empty meaningful conclusion
-            if result and len(result.strip()) > 50 and "Vision & Aesthetic Review Report" in result:
-                return result.strip()
-            elif result and len(result.strip()) > 100 and "Overall Visual Quality Score" in result:
+            # Check for non-empty meaningful conclusion from real-time execution
+            if (
+                result
+                and not result.startswith("Error:")
+                and not result.startswith("Subagent execution failed")
+                and len(result.strip()) >= 30
+            ):
                 return result.strip()
             else:
                 logger.info("[VisionExpertSubagent] Runner output incomplete, using static analyzer fallback.")

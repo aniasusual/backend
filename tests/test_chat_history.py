@@ -133,6 +133,18 @@ class TestChatHistoryManager(unittest.TestCase):
         self.assertNotIn("tool_calls", cleaned[1])
         self.assertEqual(cleaned[1]["content"], "Working on it...")
 
+    def test_prune_orphaned_tool_messages(self):
+        """Tool messages without a preceding assistant tool call are pruned."""
+        messages = [
+            {"role": "system", "content": "System"},
+            {"role": "tool", "content": "Orphaned result", "name": "locate_files_by_pattern"},
+            {"role": "user", "content": "Active prompt"},
+        ]
+        cleaned = ChatHistoryManager.prune_dangling_tool_calls(messages)
+        self.assertEqual(len(cleaned), 2)
+        self.assertEqual(cleaned[0]["role"], "system")
+        self.assertEqual(cleaned[1]["role"], "user")
+
 
 class TestContextInvariant(unittest.TestCase):
     """
@@ -265,8 +277,7 @@ class TestContextInvariant(unittest.TestCase):
         3. App closes -> reopens from disk -> Turn 3 prepares context
         Verifies against continuous in-memory execution of the same 3 turns.
         """
-        turn1_llm = [
-            {"role": "user", "content": "Create a todo app\n\n[Instruction: ...]"},
+        turn1_assistant_and_tool = [
             {
                 "role": "assistant",
                 "content": "",
@@ -276,8 +287,7 @@ class TestContextInvariant(unittest.TestCase):
             {"role": "assistant", "content": "Created todo app."},
         ]
 
-        turn2_llm = [
-            {"role": "user", "content": "Add delete button\n\n[Instruction: ...]"},
+        turn2_assistant_and_tool = [
             {
                 "role": "assistant",
                 "content": "",
@@ -290,12 +300,19 @@ class TestContextInvariant(unittest.TestCase):
         # Case A: In-memory continuous
         in_memory_msgs = []
         ContextManager.prepare_messages("Create a todo app", self.system_prompt, in_memory_msgs)
-        in_memory_msgs.extend(turn1_llm[1:])  # assistant and tool calls
+        # Capture the actual Turn 1 user message produced by prepare_messages (includes first-message anchor)
+        turn1_user_msg = in_memory_msgs[-1]  # the user message just added
+        in_memory_msgs.extend(turn1_assistant_and_tool)
         ContextManager.prepare_messages("Add delete button", self.system_prompt, in_memory_msgs)
-        in_memory_msgs.extend(turn2_llm[1:])
+        turn2_user_msg = in_memory_msgs[-1]
+        in_memory_msgs.extend(turn2_assistant_and_tool)
         in_mem_prepared_turn3 = ContextManager.prepare_messages(
             "Add filter tabs", self.system_prompt, in_memory_msgs
         )
+
+        # Build the actual turn1/turn2 llm_messages as they would be saved to disk
+        turn1_llm = [turn1_user_msg] + turn1_assistant_and_tool
+        turn2_llm = [turn2_user_msg] + turn2_assistant_and_tool
 
         # Case B: Reopened across each turn
         ChatHistoryManager.save_turn(self.temp_dir, {
@@ -305,7 +322,7 @@ class TestContextInvariant(unittest.TestCase):
         })
         reopened_1 = ChatHistoryManager.get_llm_messages(self.temp_dir)
         ContextManager.prepare_messages("Add delete button", self.system_prompt, reopened_1)
-        reopened_1.extend(turn2_llm[1:])
+        reopened_1.extend(turn2_assistant_and_tool)
 
         ChatHistoryManager.save_turn(self.temp_dir, {
             "turn_id": "turn_2",
@@ -337,5 +354,220 @@ class TestContextInvariant(unittest.TestCase):
         self.assertEqual(len(ChatHistoryManager.get_ui_events(self.temp_dir)), 0)
 
 
+    def test_incremental_and_interrupted_turn_persistence(self):
+        """
+        Verifies that saving turns incrementally with the same turn_id updates
+        the turn in place rather than creating duplicate turns, and preserves
+        in-flight progress when interrupted.
+        """
+        turn_id = "turn_stream_123"
+
+        # 1. Early persistence: initial prompt registered
+        ChatHistoryManager.save_turn(self.temp_dir, {
+            "turn_id": turn_id,
+            "status": "in_progress",
+            "clean_user_prompt": "Build me a notes app",
+            "ui_events": [{"type": "user", "content": "Build me a notes app"}],
+            "llm_messages": [{"role": "user", "content": "Build me a notes app"}],
+        })
+
+        history1 = ChatHistoryManager.load_history(self.temp_dir)
+        self.assertEqual(len(history1["turns"]), 1)
+        self.assertEqual(history1["turns"][0]["status"], "in_progress")
+
+        # 2. Incremental update after tool execution
+        ChatHistoryManager.save_turn(self.temp_dir, {
+            "turn_id": turn_id,
+            "status": "in_progress",
+            "clean_user_prompt": "Build me a notes app",
+            "ui_events": [
+                {"type": "user", "content": "Build me a notes app"},
+                {"type": "tool_call", "name": "view_bulk", "arguments": {"files": ["src/App.jsx"]}},
+                {"type": "tool_result", "name": "view_bulk", "result": "content"},
+            ],
+            "llm_messages": [
+                {"role": "user", "content": "Build me a notes app"},
+                {"role": "assistant", "content": "", "tool_calls": [{"type": "function", "function": {"name": "view_bulk"}}]},
+                {"role": "tool", "name": "view_bulk", "content": "content"},
+            ],
+        })
+
+        # Must NOT create a second turn; must update turn_0 in-place
+        history2 = ChatHistoryManager.load_history(self.temp_dir)
+        self.assertEqual(len(history2["turns"]), 1)
+        self.assertEqual(len(history2["turns"][0]["ui_events"]), 3)
+
+        # 3. Interrupted turn (e.g. user closes app)
+        ChatHistoryManager.save_turn(self.temp_dir, {
+            "turn_id": turn_id,
+            "status": "interrupted",
+            "clean_user_prompt": "Build me a notes app",
+            "ui_events": [
+                {"type": "user", "content": "Build me a notes app"},
+                {"type": "tool_call", "name": "view_bulk", "arguments": {"files": ["src/App.jsx"]}},
+                {"type": "tool_result", "name": "view_bulk", "result": "content"},
+                {"type": "status", "content": "Stopped."},
+            ],
+            "llm_messages": [
+                {"role": "user", "content": "Build me a notes app"},
+                {"role": "assistant", "content": "", "tool_calls": [{"type": "function", "function": {"name": "view_bulk"}}]},
+                {"role": "tool", "name": "view_bulk", "content": "content"},
+            ],
+        })
+
+        history3 = ChatHistoryManager.load_history(self.temp_dir)
+        self.assertEqual(len(history3["turns"]), 1)
+        self.assertEqual(history3["turns"][0]["status"], "interrupted")
+
+        # When rehydrated, ui_events and llm_messages are fully available
+        ui_events = ChatHistoryManager.get_ui_events(self.temp_dir)
+        self.assertEqual(len(ui_events), 4)
+        llm_messages = ChatHistoryManager.get_llm_messages(self.temp_dir)
+        self.assertEqual(len(llm_messages), 3)
+
+
+class TestTokenPersistenceInChatHistory(unittest.IsolatedAsyncioTestCase):
+    """
+    Verifies that conversational token events from the agent are properly saved
+    in chat history alongside tools, tool results, and terminal tools.
+    """
+
+    async def test_conversational_tokens_saved_alongside_tool_calls(self):
+        from unittest.mock import MagicMock, AsyncMock, patch
+        from plugins.coding_harness import CodingHarness
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_path = Path(tmpdir)
+            harness = CodingHarness(model_name="qwen2.5-coder:7b")
+
+            mock_registry = MagicMock()
+            mock_registry.sandbox_path = project_path
+            mock_registry.get_tools.return_value = {
+                "write_file": MagicMock(return_value="File written successfully")
+            }
+            mock_registry.get_dev_server_info.return_value = None
+
+            mock_project = MagicMock()
+            mock_project.path = project_path
+
+            context = {
+                "registry": mock_registry,
+                "project": mock_project,
+                "messages": [],
+                "model": "qwen2.5-coder:7b",
+            }
+
+            # Iteration 1: Model speaks text AND calls a tool
+            mock_chunk_1 = MagicMock()
+            mock_chunk_1.message.thinking = None
+            mock_chunk_1.message.content = "I will write the component now."
+            mock_tool_call = MagicMock()
+            mock_tool_call.function.name = "write_file"
+            mock_tool_call.function.arguments = {"file_path": "src/App.jsx", "content": "export default () => <div>App</div>;"}
+            mock_chunk_1.message.tool_calls = [mock_tool_call]
+
+            # Iteration 2: Model finishes with text and no tools
+            mock_chunk_2 = MagicMock()
+            mock_chunk_2.message.thinking = None
+            mock_chunk_2.message.tool_calls = None
+            mock_chunk_2.message.content = "Component created successfully!"
+
+            async def mock_stream_1():
+                yield mock_chunk_1
+
+            async def mock_stream_2():
+                yield mock_chunk_2
+
+            with patch("ollama.AsyncClient") as mock_client_cls:
+                mock_client = MagicMock()
+                mock_client.chat = AsyncMock(side_effect=[mock_stream_1(), mock_stream_2()])
+                mock_client_cls.return_value = mock_client
+
+                events = []
+                async for evt in harness.process_prompt("Create App.jsx", context):
+                    events.append(evt)
+
+                # Load history from disk
+                history = ChatHistoryManager.load_history(project_path)
+                self.assertEqual(len(history["turns"]), 1)
+                turn = history["turns"][0]
+                ui_events = turn["ui_events"]
+
+                # Extract token events
+                token_events = [e for e in ui_events if e.get("type") == "token"]
+                self.assertEqual(len(token_events), 2)
+                self.assertEqual(token_events[0]["content"], "I will write the component now.")
+                self.assertEqual(token_events[1]["content"], "Component created successfully!")
+
+                # Verify chronological ordering: token before tool_call in iteration 1
+                token_idx = next(i for i, e in enumerate(ui_events) if e.get("type") == "token")
+                tool_call_idx = next(i for i, e in enumerate(ui_events) if e.get("type") == "tool_call")
+                self.assertLess(token_idx, tool_call_idx)
+
+                # Verify get_ui_events returns tokens intact
+                rehydrated = ChatHistoryManager.get_ui_events(project_path)
+                rehydrated_tokens = [e for e in rehydrated if e.get("type") == "token"]
+                self.assertEqual(len(rehydrated_tokens), 2)
+
+    async def test_finish_tool_summary_saved_as_token_when_content_empty(self):
+        from unittest.mock import MagicMock, AsyncMock, patch
+        from plugins.coding_harness import CodingHarness
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_path = Path(tmpdir)
+            harness = CodingHarness(model_name="qwen2.5-coder:7b")
+
+            mock_registry = MagicMock()
+            mock_registry.sandbox_path = project_path
+            mock_registry.get_tools.return_value = {
+                "finish": MagicMock(return_value="Task completed successfully.")
+            }
+            mock_registry.get_dev_server_info.return_value = None
+
+            mock_project = MagicMock()
+            mock_project.path = project_path
+
+            context = {
+                "registry": mock_registry,
+                "project": mock_project,
+                "messages": [],
+                "model": "qwen2.5-coder:7b",
+            }
+
+            # Model calls finish with empty content (common for native tool models)
+            mock_chunk = MagicMock()
+            mock_chunk.message.thinking = None
+            mock_chunk.message.content = ""
+            mock_finish_call = MagicMock()
+            mock_finish_call.function.name = "finish"
+            mock_finish_call.function.arguments = {"summary": "Built counter app with decrement and reset buttons."}
+            mock_chunk.message.tool_calls = [mock_finish_call]
+
+            async def mock_stream():
+                yield mock_chunk
+
+            with patch("ollama.AsyncClient") as mock_client_cls:
+                mock_client = MagicMock()
+                mock_client.chat = AsyncMock(return_value=mock_stream())
+                mock_client_cls.return_value = mock_client
+
+                events = []
+                async for evt in harness.process_prompt("Build counter", context):
+                    events.append(evt)
+
+                # Check that a token event was yielded and persisted
+                token_events_yielded = [e for e in events if e.get("type") == "token"]
+                self.assertEqual(len(token_events_yielded), 1)
+                self.assertIn("Built counter app", token_events_yielded[0]["content"])
+
+                # Check chat history on disk
+                history = ChatHistoryManager.load_history(project_path)
+                ui_events = history["turns"][0]["ui_events"]
+                saved_tokens = [e for e in ui_events if e.get("type") == "token"]
+                self.assertEqual(len(saved_tokens), 1)
+                self.assertEqual(saved_tokens[0]["content"], "Built counter app with decrement and reset buttons.")
+
+
 if __name__ == "__main__":
     unittest.main()
+

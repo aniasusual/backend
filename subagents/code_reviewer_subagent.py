@@ -7,7 +7,12 @@ from typing import Dict, Any, Optional, Set, List
 from config.settings import DEFAULT_MODEL_ID
 from subagents.base import BaseSubagent
 from subagents.runner import SubagentRunner
-from subagents.reviewer import CODE_REVIEWER_SYSTEM_PROMPT, StaticSecurityScanner
+from subagents.reviewer import (
+    CODE_REVIEWER_SYSTEM_PROMPT,
+    StaticSecurityScanner,
+    ReviewFinding,
+    ReviewAuditReport,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +30,8 @@ class CodeReviewerSubagent(BaseSubagent):
         model_name: str = DEFAULT_MODEL_ID,
         tool_registry: Optional[Any] = None,
         event_callback: Optional[Any] = None,
-        max_iterations: int = 5,
+        max_iterations: int = 40,
+        allowed_tools: Optional[Any] = None,
         **kwargs,
     ):
         super().__init__(
@@ -33,12 +39,14 @@ class CodeReviewerSubagent(BaseSubagent):
             model_name=model_name,
             tool_registry=tool_registry,
             event_callback=event_callback,
+            allowed_tools=allowed_tools,
             **kwargs,
         )
         self.max_iterations = max_iterations
+        self.last_report: Optional[ReviewAuditReport] = None
 
     @property
-    def allowed_tools(self) -> Set[str]:
+    def default_allowed_tools(self) -> Set[str]:
         """Strictly read-only tools permitted for code audit."""
         return {"read_file", "view_bulk", "grep_search", "lint_javascript", "glob_files"}
 
@@ -59,21 +67,36 @@ class CodeReviewerSubagent(BaseSubagent):
         files_to_check = self._resolve_target_files(target_files)
         focus_str = ", ".join(focus_areas) if isinstance(focus_areas, (list, tuple)) else str(focus_areas or "")
 
+        # ── Pre-Flight Deterministic Static Scan ────────────────────
+        # Run static scanner first (<10ms) to provide actionable, line-numbered leads for the LLM
+        preflight_findings, preflight_score = StaticSecurityScanner.scan_structured(
+            self.sandbox_path, files_to_check, focus_str
+        )
+
+        preflight_leads_block = ""
+        if preflight_findings:
+            leads = []
+            for f in preflight_findings:
+                loc = f"{f.file_path}:{f.line_number}" if f.line_number else f.file_path
+                snippet = f' (Code: "{f.code_snippet}")' if f.code_snippet else ""
+                leads.append(f"- [{f.severity.value}] {loc}: {f.description}{snippet}")
+            preflight_leads_block = (
+                "\n\nPRE-FLIGHT STATIC SCANNER LEADS (Inspect and verify these suspect locations):\n"
+                + "\n".join(leads)
+                + "\n(Deep-dive these locations using read_file to verify context, eliminate false positives, and formulate surgical replacement code)."
+            )
+
         # ── Autonomous Child-Loop Execution ─────────────────────────
         if self.tool_registry:
-            task_prompt = f"""Conduct a comprehensive senior-level code review and security audit of the application code:
+            task_prompt = f"""Conduct a senior-level code review and security audit:
 
-TARGET FILES TO AUDIT:
+TARGET FILES:
 {', '.join(files_to_check) if files_to_check else 'Inspect discovered source files across src/ and server/'}
 
 FOCUS AREAS:
-{focus_str if focus_str else 'Correctness, security vulnerabilities, Express error handling, React best practices, and runtime safety'}
+{focus_str if focus_str else 'Correctness, security vulnerabilities, Express error handling, React best practices, and runtime safety'}{preflight_leads_block}
 
-Instructions:
-1. Use glob_files, read_file, or view_bulk to discover and read code across components, routes, and server files.
-2. Use lint_javascript to check for syntax errors or lint warnings on JavaScript/JSX files.
-3. Check for security issues (hardcoded credentials, unhandled API rejections, SQL/shell injection).
-4. Return the structured Code Review & Security Audit report with score and surgical fixes."""
+Inspect the files, verify pre-flight leads, and return the structured Code Review & Security Audit report with score and surgical fixes."""
 
             try:
                 runner = SubagentRunner(
@@ -86,19 +109,21 @@ Instructions:
                     event_callback=self.event_callback,
                 )
                 report = runner.run(task_prompt)
+                self.last_run_events = runner.last_run_events
+                self.last_run_metrics = runner.last_run_metrics
                 if (
                     report
                     and not report.startswith("Error:")
                     and not report.startswith("Subagent execution failed")
-                    and ("Code Review" in report or "Code Quality Score" in report)
-                    and len(report.strip()) >= 50
+                    and len(report.strip()) >= 30
                 ):
+                    self.last_report = ReviewAuditReport.from_markdown(report, files_to_check)
                     return report
             except Exception as e:
                 logger.warning(f"CodeReviewerSubagent autonomous runner failed, using heuristic fallback: {e}")
 
         # ── Deterministic Heuristic Fallback ────────────────────────
-        return self._heuristic_fallback(files_to_check, focus_str)
+        return self._heuristic_fallback(files_to_check, focus_str, preflight_findings, preflight_score)
 
     def _resolve_target_files(self, target_files: Any) -> List[str]:
         """Resolves target files from argument string, list, or automatically discovers key app files."""
@@ -125,7 +150,20 @@ Instructions:
         # Multi-file discovery across src/ and server/
         return StaticSecurityScanner.discover_code_files(self.sandbox_path)
 
-    def _heuristic_fallback(self, files: List[str], focus_areas: str) -> str:
+    def _heuristic_fallback(
+        self,
+        files: List[str],
+        focus_areas: str,
+        preflight_findings: Optional[List[ReviewFinding]] = None,
+        preflight_score: Optional[int] = None,
+    ) -> str:
         """Deterministic static pattern audit used when LLM runner is unreachable."""
-        findings, score = StaticSecurityScanner.scan(self.sandbox_path, files, focus_areas)
-        return StaticSecurityScanner.generate_report(files, findings, score)
+        findings = preflight_findings
+        score = preflight_score
+        if findings is None or score is None:
+            findings, score = StaticSecurityScanner.scan_structured(self.sandbox_path, files, focus_areas)
+
+        legacy_findings, legacy_score = StaticSecurityScanner.scan(self.sandbox_path, files, focus_areas)
+        report_text = StaticSecurityScanner.generate_report(files, legacy_findings, legacy_score)
+        self.last_report = ReviewAuditReport.from_markdown(report_text, files)
+        return report_text

@@ -146,8 +146,9 @@ class ChatHistoryManager:
     def prune_dangling_tool_calls(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Crash recovery: Ollama returns a 400 Bad Request if an assistant message contains
-        tool_calls without matching tool result messages immediately following it.
-        This prunes uncompleted assistant tool calls from interrupted runs.
+        tool_calls without matching tool result messages immediately following it, or if
+        an orphaned tool result message exists without a preceding assistant message.
+        This prunes uncompleted assistant tool calls and orphaned tool results.
         """
         if not messages:
             return []
@@ -184,6 +185,10 @@ class ChatHistoryManager:
                         cleaned.append({"role": "assistant", "content": content})
                     i = j
                     continue
+            elif role == "tool":
+                # Orphaned tool message without preceding assistant tool call: prune it
+                i += 1
+                continue
             else:
                 cleaned.append(msg)
                 i += 1
