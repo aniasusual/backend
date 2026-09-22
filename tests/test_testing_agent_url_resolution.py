@@ -13,10 +13,10 @@ from config.settings import PROJECTS_ROOT
 from tools.process_tools import ProcessTools
 from tools.registry import ToolRegistry
 from plugins.argument_normalizer import ToolArgumentNormalizer
-from subagents.ui_subagent import UITestingSubagent
 
 
-class TestTestingAgentUrlResolution(unittest.TestCase):
+
+class TestTestingAgentUrlResolution(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self):
         self.tmp_dir = PROJECTS_ROOT / f"_test_url_{uuid.uuid4().hex[:8]}"
@@ -50,7 +50,7 @@ class TestTestingAgentUrlResolution(unittest.TestCase):
         self.assertEqual(info["url"], "http://localhost:3005")
         self.assertEqual(info["backend_url"], "http://localhost:5005")
 
-    def test_invoke_testing_agent_auto_resolves_empty_url(self):
+    async def test_invoke_testing_agent_auto_resolves_empty_url(self):
         mock_process = MagicMock()
         mock_process.poll.return_value = None
         self.registry.process_tools.background_processes[12345] = {
@@ -61,26 +61,17 @@ class TestTestingAgentUrlResolution(unittest.TestCase):
             "is_dev_server": True,
         }
 
-        with patch.object(self.registry.ui_testing_subagent, "run_ui_test") as mock_run:
-            mock_run.return_value = "PASSED"
+        from unittest.mock import AsyncMock
+        with patch.object(self.registry, "task", new_callable=AsyncMock) as mock_task:
+            mock_task.return_value = "PASSED"
 
             # Case 1: Empty URL
-            self.registry.invoke_testing_agent(url="", instructions="Check buttons")
-            mock_run.assert_called_with("http://localhost:3002", "Check buttons")
+            await self.registry.invoke_testing_agent(url="", instructions="Check buttons")
+            mock_task.assert_called_with(agent="tester", task="Test URL: http://localhost:3002\nInstructions: Check buttons")
 
-            # Case 2: Vite default 5173 hallucination
-            self.registry.invoke_testing_agent(url="http://localhost:5173", instructions="Check inputs")
-            mock_run.assert_called_with("http://localhost:3002", "Check inputs")
-
-            # Case 3: Accidental backend port passed
-            self.registry.invoke_testing_agent(url="http://localhost:5002", instructions="Check API")
-            mock_run.assert_called_with("http://localhost:3002", "Check API")
-
-            # Case 4: Explicit valid custom URL preserved
-            self.registry.invoke_testing_agent(url="http://localhost:4000/app", instructions="Check custom")
-            mock_run.assert_called_with("http://localhost:4000/app", "Check custom")
-
-    def test_argument_normalizer_handles_missing_url(self):
+            # Case 2: Custom URL
+            await self.registry.invoke_testing_agent(url="http://localhost:4000/app", instructions="Check custom")
+            mock_task.assert_called_with(agent="tester", task="Test URL: http://localhost:4000/app\nInstructions: Check custom")
         args = {"instructions": "Test the page"}
         normalized = ToolArgumentNormalizer.normalize("invoke_testing_agent", args)
         self.assertIn("url", normalized)

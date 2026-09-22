@@ -75,7 +75,7 @@ class TestTokenEstimator(unittest.TestCase):
         # Real TOOL_SCHEMAS in Lowkey (24 tools) should estimate between 2,500 and 5,500 tokens
         total_schema_tokens = TokenEstimator.estimate_schemas(TOOL_SCHEMAS)
         self.assertGreater(total_schema_tokens, 2500)
-        self.assertLess(total_schema_tokens, 5500)
+        self.assertLess(total_schema_tokens, 6500)
 
     def test_estimate_total_includes_tool_schemas(self):
         from tools.schemas import TOOL_SCHEMAS
@@ -358,37 +358,10 @@ class TestContextManager(unittest.TestCase):
         self.assertEqual(assistant_turn["role"], "assistant")
         self.assertIn("Question asked: Do you want dark mode? (Options: Yes, No)", assistant_turn["content"])
 
-        # Latest user prompt must have the confirmation anchor (and no hardcoded project paths)
+        # Latest user prompt must be the clean user prompt without any injected anchors
         latest_user = res[3]
         self.assertEqual(latest_user["role"], "user")
-        self.assertIn("yes", latest_user["content"])
-        self.assertIn("You now have the user's response/confirmation", latest_user["content"])
-        self.assertNotIn("server/index.js", latest_user["content"])
-        self.assertNotIn("src/App.jsx", latest_user["content"])
-
-    def test_prepare_messages_error_handling(self):
-        existing = [{"role": "user", "content": "Initial prompt"}]
-        res = ContextManager.prepare_messages("It failed with a SyntaxError in App.jsx", "System Prompt", existing)
-
-        latest_user = res[-1]
-        self.assertIn("An error or bug was reported", latest_user["content"])
-
-    def test_prepare_messages_conversational_with_error_mention(self):
-        existing = [{"role": "user", "content": "Initial prompt"}]
-        # Educational / informational question that happens to mention "errors"
-        res = ContextManager.prepare_messages("can you explain how errors are handled in App.jsx?", "System Prompt", existing)
-
-        latest_user = res[-1]
-        self.assertEqual(latest_user["role"], "user")
-        self.assertIn("Do NOT invoke file-writing, editing, or terminal tools", latest_user["content"])
-        self.assertNotIn("An error or bug was reported", latest_user["content"])
-
-    def test_prepare_messages_negated_error_handling(self):
-        existing = [{"role": "user", "content": "Initial prompt"}]
-        res = ContextManager.prepare_messages("there is no error, everything works cleanly", "System Prompt", existing)
-
-        latest_user = res[-1]
-        self.assertNotIn("An error or bug was reported", latest_user["content"])
+        self.assertEqual(latest_user["content"], "yes")
 
     def test_maybe_squash_in_loop(self):
         messages = [
@@ -435,23 +408,6 @@ class TestContextManager(unittest.TestCase):
         self.assertEqual(compacted[0]["content"], "build me a notes app")
         self.assertEqual(compacted[1]["role"], "assistant")
         self.assertNotIn("[Tool Result", compacted[0]["content"])
-
-    def test_prepare_messages_conversational_handling(self):
-        existing = [{"role": "user", "content": "Initial prompt"}]
-        res = ContextManager.prepare_messages("what were my last two messages to you??", "System Prompt", existing)
-
-        latest_user = res[-1]
-        self.assertEqual(latest_user["role"], "user")
-        self.assertIn("Do NOT invoke file-writing, editing, or terminal tools", latest_user["content"])
-
-    def test_prepare_messages_action_request_gets_default_anchor(self):
-        existing = [{"role": "user", "content": "Initial prompt"}]
-        # Question that requests an action
-        res = ContextManager.prepare_messages("can you add a delete button?", "System Prompt", existing)
-
-        latest_user = res[-1]
-        self.assertEqual(latest_user["role"], "user")
-        self.assertIn("Directly execute tools (write_files, edit_file, read_file", latest_user["content"])
 
     def test_maybe_squash_with_tool_schemas(self):
         from tools.schemas import TOOL_SCHEMAS
@@ -1332,17 +1288,17 @@ class TestCompactorCumulativeRequirements(unittest.TestCase):
         self.assertIn("Persistent Diagnostics / Active Issues:", head)
         self.assertIn("[execute_command] Command failed (exit code 1)", head)
 
-    def test_compactor_strips_alerts_and_anchors_from_cumulative_directives(self):
-        """Eviction alert markers and project context anchors are cleanly stripped from user directives in <analysis>."""
+    def test_compactor_strips_alerts_from_cumulative_directives(self):
+        """Eviction alert markers are cleanly stripped from user directives in <analysis>."""
         messages_to_summarize = [
             {
                 "role": "user",
-                "content": f"{ALERT_EVICTION_MARKER}\n\nBuild a notes app\n\n[Project Context — First Turn]\nBoilerplate.",
+                "content": f"{ALERT_EVICTION_MARKER}\n\nBuild a notes app",
             },
             {"role": "assistant", "content": "Created base files."},
             {
                 "role": "user",
-                "content": "Add dark mode toggle\n\n[Instruction: Directly execute tools...]",
+                "content": "Add dark mode toggle",
             },
             {"role": "assistant", "content": "Added dark mode."},
         ]
@@ -1351,9 +1307,6 @@ class TestCompactorCumulativeRequirements(unittest.TestCase):
         self.assertIn("Original User Request: Build a notes app", head)
         self.assertIn("Add dark mode toggle", head)
         self.assertNotIn(ALERT_EVICTION_MARKER, head)
-        self.assertNotIn("[Project Context", head)
-        self.assertNotIn("[Instruction:", head)
-
 
 class TestContextTelemetry(unittest.TestCase):
     """

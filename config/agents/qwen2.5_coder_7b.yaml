@@ -18,37 +18,28 @@ spec:
   supports_native_tools: true
 
   whitelisted_tools:
-    - glob_files
-    - view_bulk
-    - read_file
-    - write_file
-    - write_files
-    - edit_file
-    - insert_text
-    - grep_search
-    - list_directory
     - locate_files_by_pattern
     - extract_signatures
     - map_dependencies
-    - lint_javascript
-    - get_assets
-    - search_web
-    - ask_human
-    - finish
-    - execute_command
-    - run_background_command
-    - stop_background_command
+    - glob_files
+    - grep_search
+    - read_file
+    - write_file
+    - edit_file
     - mount_file
     - unmount_file
     - close_file
     - list_mounted_files
+    - lint_javascript
+    - get_assets
+    - execute_command
+    - search_web
+    - ask_human
+    - finish
+    - task
+    - hub
 
-  enabled_subagents:
-    - invoke_design_agent
-    - invoke_troubleshoot_agent
-    - invoke_vision_agent
-    - invoke_testing_agent
-    - invoke_code_reviewer_agent
+  enabled_subagents: []
 
   target_models:
     - "qwen2.5-coder:7b"

@@ -300,7 +300,7 @@ class TestContextInvariant(unittest.TestCase):
         # Case A: In-memory continuous
         in_memory_msgs = []
         ContextManager.prepare_messages("Create a todo app", self.system_prompt, in_memory_msgs)
-        # Capture the actual Turn 1 user message produced by prepare_messages (includes first-message anchor)
+        # Capture the actual Turn 1 user message produced by prepare_messages
         turn1_user_msg = in_memory_msgs[-1]  # the user message just added
         in_memory_msgs.extend(turn1_assistant_and_tool)
         ContextManager.prepare_messages("Add delete button", self.system_prompt, in_memory_msgs)

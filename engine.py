@@ -218,6 +218,8 @@ async def websocket_endpoint(websocket: WebSocket):
             elif event.get("type") == "preview_stopped":
                 project_manager.update_meta(active_project.name, port=None)
             elif event.get("type") == "virtual_ram_updated":
+                if active_project and hasattr(active_project, "path"):
+                    ChatHistoryManager.save_virtual_ram(active_project.path, getattr(active_registry, "mounted_virtual_ram", {}))
                 all_schemas = list(TOOL_SCHEMAS.values()) if isinstance(TOOL_SCHEMAS, dict) else TOOL_SCHEMAS
                 active_model = getattr(active_registry, "model_name", DEFAULT_MODEL_ID)
                 ram_telemetry = ContextManager.get_context_telemetry(
@@ -234,6 +236,9 @@ async def websocket_endpoint(websocket: WebSocket):
             print(f"Error in event callback: {e}")
         
     active_registry = ToolRegistry(active_project.path, event_callback=sync_send_event)
+    saved_ram = ChatHistoryManager.get_virtual_ram(active_project.path)
+    if saved_ram and hasattr(active_registry, "file_tools"):
+        active_registry.file_tools.mounted_virtual_ram.update(saved_ram)
     all_schemas = list(TOOL_SCHEMAS.values()) if isinstance(TOOL_SCHEMAS, dict) else TOOL_SCHEMAS
     connect_telemetry = ContextManager.get_context_telemetry(
         messages=session_messages,
@@ -312,9 +317,26 @@ async def websocket_endpoint(websocket: WebSocket):
                     continue
                 
                 try:
+                    # Cancel any in-flight harness task from previous project
+                    if harness_task and not harness_task.done():
+                        harness_task.cancel()
+                        try:
+                            await harness_task
+                        except (asyncio.CancelledError, Exception):
+                            pass
+                        harness_task = None
+
+                    # Cancel any running background subagents
+                    if hasattr(active_registry, "async_job_manager") and active_registry.async_job_manager:
+                        for job in active_registry.async_job_manager.list_jobs(status="running"):
+                            active_registry.async_job_manager.cancel_job(job["job_id"])
+
                     active_registry.cleanup()
                     active_project = project_manager.get_project(project_name)
                     active_registry = ToolRegistry(active_project.path, event_callback=sync_send_event)
+                    saved_ram = ChatHistoryManager.get_virtual_ram(active_project.path)
+                    if saved_ram and hasattr(active_registry, "file_tools"):
+                        active_registry.file_tools.mounted_virtual_ram.update(saved_ram)
                     session_messages.clear()
                     session_messages.extend(ChatHistoryManager.get_llm_messages(active_project.path))
                     await websocket.send_json({"type": "project_opened", "project": active_project.to_dict()})
@@ -362,6 +384,20 @@ async def websocket_endpoint(websocket: WebSocket):
                 continue
 
             if message.get("action") == "close_project":
+                # Cancel any in-flight harness task
+                if harness_task and not harness_task.done():
+                    harness_task.cancel()
+                    try:
+                        await harness_task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+                    harness_task = None
+
+                # Cancel any running background subagents
+                if hasattr(active_registry, "async_job_manager") and active_registry.async_job_manager:
+                    for job in active_registry.async_job_manager.list_jobs(status="running"):
+                        active_registry.async_job_manager.cancel_job(job["job_id"])
+
                 active_registry.cleanup()
                 session_messages.clear()
                 continue
@@ -407,10 +443,15 @@ async def websocket_endpoint(websocket: WebSocket):
                     harness_task.cancel()
                     try:
                         await harness_task
-                    except asyncio.CancelledError:
+                    except (asyncio.CancelledError, Exception):
                         pass
-                    except Exception:
-                        pass
+                    harness_task = None
+
+                # Cancel any running background subagents
+                if hasattr(active_registry, "async_job_manager") and active_registry.async_job_manager:
+                    for job in active_registry.async_job_manager.list_jobs(status="running"):
+                        active_registry.async_job_manager.cancel_job(job["job_id"])
+
                 await websocket.send_json({
                     "type": "status",
                     "content": "Stopped: Agent execution stopped by user.",

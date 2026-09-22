@@ -49,6 +49,7 @@ class ChatHistoryManager:
                 "created_at": _now_iso(),
                 "updated_at": _now_iso(),
                 "turns": [],
+                "mounted_virtual_ram": {},
             }
 
         try:
@@ -57,6 +58,8 @@ class ChatHistoryManager:
                 raise ValueError("Corrupted chat history format")
             if "turns" not in data or not isinstance(data["turns"], list):
                 data["turns"] = []
+            if "mounted_virtual_ram" not in data or not isinstance(data["mounted_virtual_ram"], dict):
+                data["mounted_virtual_ram"] = {}
             return data
         except Exception as e:
             print(f"[ChatHistory] Warning: Failed to read {chat_file}: {e}")
@@ -66,6 +69,7 @@ class ChatHistoryManager:
                 "created_at": _now_iso(),
                 "updated_at": _now_iso(),
                 "turns": [],
+                "mounted_virtual_ram": {},
             }
 
     @classmethod
@@ -108,6 +112,36 @@ class ChatHistoryManager:
             raise IOError(f"Failed to write chat history to {chat_file}: {e}")
 
     @classmethod
+    def save_virtual_ram(cls, project_path: str | Path, mounted_ram: Dict[str, str]) -> None:
+        """Atomically persists active Dynamic Virtual RAM files to .lowkey_chat.json."""
+        chat_file = cls.get_chat_file(project_path)
+        history = cls.load_history(project_path)
+        history["mounted_virtual_ram"] = dict(mounted_ram)
+        history["updated_at"] = _now_iso()
+
+        chat_file.parent.mkdir(parents=True, exist_ok=True)
+        temp_dir = chat_file.parent
+        temp_file = None
+        try:
+            with tempfile.NamedTemporaryFile("w", dir=temp_dir, delete=False, encoding="utf-8") as tf:
+                json.dump(history, tf, indent=2, ensure_ascii=False)
+                temp_file = Path(tf.name)
+            os.replace(temp_file, chat_file)
+        except Exception as e:
+            if temp_file and temp_file.exists():
+                try:
+                    temp_file.unlink()
+                except Exception:
+                    pass
+            print(f"[ChatHistory] Warning: Failed to save virtual RAM to {chat_file}: {e}")
+
+    @classmethod
+    def get_virtual_ram(cls, project_path: str | Path) -> Dict[str, str]:
+        """Loads and returns active Dynamic Virtual RAM files from .lowkey_chat.json."""
+        history = cls.load_history(project_path)
+        return history.get("mounted_virtual_ram", {})
+
+    @classmethod
     def get_ui_events(cls, project_path: str | Path) -> List[Dict[str, Any]]:
         """
         Reconstructs the full visual event stream for frontend rendering.
@@ -123,8 +157,10 @@ class ChatHistoryManager:
                 # Ensure past tools and thoughts are marked collapsed on rehydration
                 if evt_copy.get("type") in ["tool_call", "tool_result", "thinking"]:
                     evt_copy["collapsed"] = True
+                # Interrupted / in-flight subagents from closed sessions must not remain 'running'
+                if evt_copy.get("subagentStatus") == "running":
+                    evt_copy["subagentStatus"] = "interrupted"
                 events.append(evt_copy)
-
         return events
 
     @classmethod

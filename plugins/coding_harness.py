@@ -165,7 +165,7 @@ class CodingHarness(BaseHarness):
             "type": "context_telemetry",
             "telemetry": initial_telemetry,
         }
-
+        yield {"type": "status", "content": "Running"}
         try:
             client = ollama.AsyncClient()
 
@@ -369,6 +369,24 @@ class CodingHarness(BaseHarness):
                                 prev_evt["subagentStatus"] = "completed"
                                 break
                     yield event
+                # Check for settled background subagent deliveries
+                async_job_mgr = getattr(registry, "async_job_manager", None)
+                if async_job_mgr:
+                    for delivery in async_job_mgr.consume_deliveries():
+                        delivery_text = f"Background subagent `{delivery.id}` ({delivery.agent}) completed:\n{delivery.output}"
+                        async_res_event = {
+                            "type": "tool_result",
+                            "name": "task",
+                            "result": delivery_text,
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "subagentStatus": "completed" if delivery.exit_code == 0 else "failed",
+                        }
+                        turn_ui_events.append(async_res_event)
+                        messages.append({
+                            "role": "user",
+                            "content": delivery_text,
+                        })
+                        yield async_res_event
 
                 # Incremental persistence: save progress to .lowkey_chat.json immediately after each tool batch
                 self._persist_turn(
@@ -412,15 +430,17 @@ class CodingHarness(BaseHarness):
                         "type": "context_telemetry",
                         "telemetry": final_telemetry,
                     }
+                    terminal_status = "AwaitingHuman" if ask_tc else "Done"
+                    turn_status = "awaiting_human" if ask_tc else "completed"
                     turn_ui_events.append({
                         "type": "status",
-                        "content": "Done",
+                        "content": terminal_status,
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                     })
                     self._persist_turn(
-                        context, user_prompt, turn_ui_events, messages[turn_start_idx:], model_name, turn_id=turn_id, status="completed"
+                        context, user_prompt, turn_ui_events, messages[turn_start_idx:], model_name, turn_id=turn_id, status=turn_status
                     )
-                    yield {"type": "status", "content": "Done"}
+                    yield {"type": "status", "content": terminal_status}
                     return
 
             final_telemetry = ContextManager.get_context_telemetry(
@@ -538,8 +558,19 @@ class CodingHarness(BaseHarness):
                     )
                     continue
 
-            result = await asyncio.to_thread(self._run_tool, func_name, func_args, tool_map)
-            display_result = self._format_display_result(result)
+            func = tool_map.get(func_name)
+            if func and inspect.iscoroutinefunction(func):
+                sig = inspect.signature(func)
+                has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+                if not has_var_keyword:
+                    valid_params = set(sig.parameters.keys())
+                    filtered_args = {k: v for k, v in func_args.items() if k in valid_params}
+                else:
+                    filtered_args = func_args
+                result = await func(**filtered_args)
+            else:
+                result = await asyncio.to_thread(self._run_tool, func_name, func_args, tool_map)
+            display_result = self._format_display_result(str(result))
 
             # Retrieve subagent trace and metrics for persistence and correlation
             registry = context.get("registry")
@@ -561,6 +592,11 @@ class CodingHarness(BaseHarness):
                 evt["subagentEvents"] = list(subagent_events)
                 evt["subagentMetrics"] = dict(subagent_metrics)
                 evt["subagentStatus"] = "completed"
+                # Drain consumed events so they cannot leak to subsequent tools
+                if hasattr(subagent, "last_run_events") and isinstance(subagent.last_run_events, list):
+                    subagent.last_run_events.clear()
+                if hasattr(subagent, "last_run_metrics") and isinstance(subagent.last_run_metrics, dict):
+                    subagent.last_run_metrics.clear()
 
             yield tool_res_event
 
@@ -638,5 +674,8 @@ class CodingHarness(BaseHarness):
                 "llm_messages": list(llm_messages),
             }
             ChatHistoryManager.save_turn(project.path, turn_record)
+            registry = context.get("registry")
+            if registry and hasattr(registry, "mounted_virtual_ram"):
+                ChatHistoryManager.save_virtual_ram(project.path, getattr(registry, "mounted_virtual_ram", {}))
         except Exception as e:
             print(f"[CodingHarness] Error saving turn to chat history: {e}")

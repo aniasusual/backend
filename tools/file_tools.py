@@ -118,9 +118,58 @@ class FileTools:
                 output += f"\n\n[Lines {start_idx + 1}-{end_idx} shown. File has {total_lines} lines. Use read_file(start_line={next_start}) to continue.]"
 
             self._last_read_file = file_path
+            self._auto_mount_if_budget_allows(file_path, content="".join(lines))
             return output
         except Exception as e:
             return f"Error reading file: {str(e)}"
+
+    def _auto_mount_if_budget_allows(self, file_path: str, content: Optional[str] = None) -> bool:
+        """Dynamically auto-mounts an active workspace file into Virtual RAM if within 60% budget cap.
+        Spec [CP-101.2]: Volatile buffer populated dynamically by tool-calling events.
+        Does not raise or fail caller if budget exceeded; safely skips auto-mounting.
+        """
+        if not file_path:
+            return False
+        clean_file_path = str(file_path).strip()
+        if not self._is_safe_path(clean_file_path):
+            return False
+
+        clean_path = os.path.normpath(clean_file_path).lstrip("/").replace("\\", "/")
+        target = self.sandbox_path / clean_path
+        if not target.exists() or target.is_dir():
+            return False
+
+        if content is None:
+            try:
+                content = target.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                return False
+
+        file_tokens = TokenEstimator.estimate_text(f"--- FILE: {clean_path} ---\n{content}\n")
+        active_model = getattr(self, "model_name", None) or DEFAULT_MODEL_ID
+        context_window = get_model_context_window(active_model)
+        max_ram_budget = int(context_window * self.max_ram_budget_ratio)
+
+        current_ram_tokens = sum(
+            TokenEstimator.estimate_text(f"--- FILE: {p} ---\n{c}\n")
+            for p, c in self.mounted_virtual_ram.items()
+            if p != clean_path
+        )
+        new_total_tokens = current_ram_tokens + file_tokens
+
+        if max_ram_budget > 0 and new_total_tokens > max_ram_budget:
+            return False
+
+        self.mounted_virtual_ram[clean_path] = content
+        if self.event_callback:
+            self.event_callback({
+                "type": "virtual_ram_updated",
+                "action": "mount",
+                "file": clean_path,
+                "ram_tokens": new_total_tokens,
+                "max_ram_budget": max_ram_budget,
+            })
+        return True
 
     def _sync_virtual_ram_on_change(self, file_path: str, content: Optional[str] = None) -> None:
         """If file_path is currently mounted in Virtual RAM, synchronizes its content."""
@@ -529,7 +578,7 @@ class FileTools:
             target.parent.mkdir(parents=True, exist_ok=True)
             with open(target, "w", encoding="utf-8") as f:
                 f.write(content)
-            self._sync_virtual_ram_on_change(file_path, content)
+            self._auto_mount_if_budget_allows(file_path, content)
             if self.event_callback:
                 self.event_callback({"type": "file_changed", "file": file_path})
             return f"Successfully wrote to {file_path}"
@@ -572,7 +621,7 @@ class FileTools:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 with open(target, "w", encoding="utf-8") as f:
                     f.write(content)
-                self._sync_virtual_ram_on_change(file_path, content)
+                self._auto_mount_if_budget_allows(file_path, content)
                 written_paths.append(file_path)
 
             if self.event_callback:
@@ -613,7 +662,7 @@ class FileTools:
 
             with open(target, "w", encoding="utf-8") as f:
                 f.writelines(lines)
-            self._sync_virtual_ram_on_change(file_path, "".join(lines))
+            self._auto_mount_if_budget_allows(file_path, "".join(lines))
 
             if self.event_callback:
                 self.event_callback({"type": "file_changed", "file": file_path})
@@ -651,14 +700,14 @@ class FileTools:
                 if replace_all:
                     updated = content.replace(old_text, new_text)
                     target.write_text(updated, encoding="utf-8")
-                    self._sync_virtual_ram_on_change(file_path, updated)
+                    self._auto_mount_if_budget_allows(file_path, updated)
                     if self.event_callback:
                         self.event_callback({"type": "file_changed", "file": file_path})
                     return f"Successfully edited {file_path} (replaced all {count} occurrences)"
                 else:
                     updated = content.replace(old_text, new_text, 1)
                     target.write_text(updated, encoding="utf-8")
-                    self._sync_virtual_ram_on_change(file_path, updated)
+                    self._auto_mount_if_budget_allows(file_path, updated)
                     if self.event_callback:
                         self.event_callback({"type": "file_changed", "file": file_path})
                     return f"Successfully edited {file_path}"
@@ -711,7 +760,7 @@ class FileTools:
                     updated = "\n".join(updated_lines) + ("\n" if has_trailing_nl else "")
 
                     target.write_text(updated, encoding="utf-8")
-                    self._sync_virtual_ram_on_change(file_path, updated)
+                    self._auto_mount_if_budget_allows(file_path, updated)
                     if self.event_callback:
                         self.event_callback({"type": "file_changed", "file": file_path})
 

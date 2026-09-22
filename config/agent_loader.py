@@ -13,39 +13,29 @@ AGENTS_CONFIG_DIR = Path(__file__).parent / "agents"
 
 
 ALL_STANDARD_TOOLS: List[str] = [
-    "read_file",
-    "view_bulk",
-    "glob_files",
-    "grep_search",
-    "write_file",
-    "write_files",
-    "edit_file",
-    "insert_text",
-    "list_directory",
     "locate_files_by_pattern",
     "extract_signatures",
     "map_dependencies",
+    "glob_files",
+    "grep_search",
+    "read_file",
+    "write_file",
+    "edit_file",
     "mount_file",
     "unmount_file",
     "close_file",
     "list_mounted_files",
     "lint_javascript",
     "get_assets",
+    "execute_command",
     "search_web",
     "ask_human",
     "finish",
-    "execute_command",
-    "run_background_command",
-    "stop_background_command",
+    "task",
+    "hub",
 ]
 
-ALL_SUBAGENTS: List[str] = [
-    "invoke_design_agent",
-    "invoke_troubleshoot_agent",
-    "invoke_vision_agent",
-    "invoke_testing_agent",
-    "invoke_code_reviewer_agent",
-]
+ALL_SUBAGENTS: List[str] = []
 
 
 @dataclass

@@ -10,11 +10,7 @@ from tools.process_tools import ProcessTools
 from tools.asset_tools import AssetTools
 from tools.interaction_tools import InteractionTools
 from tools.search_tools import SearchTools
-from subagents.ui_subagent import UITestingSubagent
-from subagents.design_subagent import DesignSubagent
-from subagents.troubleshoot_subagent import TroubleshootSubagent
-from subagents.vision_subagent import VisionExpertSubagent
-from subagents.code_reviewer_subagent import CodeReviewerSubagent
+from task import TaskTool, HubTool, YieldTool, AsyncJobManager
 
 
 class ToolRegistry:
@@ -75,81 +71,56 @@ class ToolRegistry:
         )
         self.interaction_tools = InteractionTools(
             event_callback=self.event_callback,
+            sandbox_path=self.sandbox_path,
         )
         self.search_tools = SearchTools()
-        subagent_tools = subagent_tools or {}
-        self.design_subagent = DesignSubagent(
-            sandbox_path=self.sandbox_path,
-            model_name=self.model_name,
+        # Initialize Task delegation and coordination tools
+        self.async_job_manager = AsyncJobManager.get_global()
+        self.task_tool = TaskTool(
             tool_registry=self,
-            event_callback=self.event_callback,
-            allowed_tools=subagent_tools.get("design") or subagent_tools.get("invoke_design_agent"),
+            max_recursion_depth=2,
+            async_job_manager=self.async_job_manager,
         )
-        self.troubleshoot_subagent = TroubleshootSubagent(
-            sandbox_path=self.sandbox_path,
-            model_name=self.model_name,
-            tool_registry=self,
-            event_callback=self.event_callback,
-            allowed_tools=subagent_tools.get("troubleshoot") or subagent_tools.get("invoke_troubleshoot_agent"),
+        self.hub_tool = HubTool(
+            self_agent_id="main_agent",
+            async_job_manager=self.async_job_manager,
         )
-        self.vision_subagent = VisionExpertSubagent(
-            sandbox_path=self.sandbox_path,
-            model_name=self.model_name,
-            tool_registry=self,
-            event_callback=self.event_callback,
-            allowed_tools=subagent_tools.get("vision") or subagent_tools.get("invoke_vision_agent"),
-        )
-        self.ui_testing_subagent = UITestingSubagent(
-            sandbox_path=self.sandbox_path,
-            model_name=self.model_name,
-            tool_registry=self,
-            event_callback=self.event_callback,
-            allowed_tools=subagent_tools.get("testing") or subagent_tools.get("invoke_testing_agent"),
-        )
-        self.code_reviewer_subagent = CodeReviewerSubagent(
-            sandbox_path=self.sandbox_path,
-            model_name=self.model_name,
-            tool_registry=self,
-            event_callback=self.event_callback,
-            allowed_tools=subagent_tools.get("code_reviewer") or subagent_tools.get("invoke_code_reviewer_agent"),
-        )
+        self.yield_tool = YieldTool()
 
     def set_model_name(self, model_name: str) -> None:
-        """Dynamically synchronizes the active model name to all child subagents."""
+        """Dynamically synchronizes the active model name."""
         if not model_name:
             return
         self.model_name = model_name
         if hasattr(self, "file_tools"):
             self.file_tools.model_name = model_name
-        for subagent in [
-            self.design_subagent,
-            self.troubleshoot_subagent,
-            self.vision_subagent,
-            self.ui_testing_subagent,
-            self.code_reviewer_subagent,
-        ]:
-            if hasattr(subagent, "model_name"):
-                subagent.model_name = model_name
 
     def configure_subagent_tools(self, subagent_name: str, allowed_tools: Any) -> None:
-        """Dynamically configures allowed tools for a specific subagent."""
-        subagent = self.get_subagent(subagent_name)
-        if subagent and hasattr(subagent, "allowed_tools"):
-            subagent.allowed_tools = allowed_tools
+        """Compatibility stub for dynamic subagent tool configuration."""
+        pass
+
+    SUBAGENT_TOOL_NAMES = {
+        "task",
+        "invoke_design_agent",
+        "invoke_troubleshoot_agent",
+        "invoke_vision_agent",
+        "invoke_testing_agent",
+        "invoke_code_reviewer_agent",
+    }
 
     def get_subagent(self, name: str) -> Optional[Any]:
-        """Resolves subagent instance by canonical tool name or alias."""
-        if name in ("invoke_design_agent", "design", "design_agent"):
-            return self.design_subagent
-        if name in ("invoke_troubleshoot_agent", "troubleshoot", "troubleshoot_agent"):
-            return self.troubleshoot_subagent
-        if name in ("invoke_vision_agent", "vision", "vision_agent"):
-            return self.vision_subagent
-        if name in ("invoke_testing_agent", "testing", "testing_agent", "ui_testing"):
-            return self.ui_testing_subagent
-        if name in ("invoke_code_reviewer_agent", "code_reviewer", "reviewer", "code_reviewer_agent"):
-            return self.code_reviewer_subagent
+        """Resolves task tool delegation for subagent tracking."""
+        if name in self.SUBAGENT_TOOL_NAMES:
+            return self.task_tool
         return None
+
+    @property
+    def last_run_events(self) -> List[Dict[str, Any]]:
+        return getattr(self.task_tool, "last_run_events", [])
+
+    @property
+    def last_run_metrics(self) -> Dict[str, Any]:
+        return getattr(self.task_tool, "last_run_metrics", {})
 
     def _is_safe_path(self, file_path: str) -> bool:
         """Verify the path is within the sandbox directory."""
@@ -204,11 +175,22 @@ class ToolRegistry:
             # Interaction & Lifecycle Tools
             "ask_human": self.ask_human,
             "finish": self.finish,
+            # Browser Automation & Testing Tools
+            "browser_navigate": self.interaction_tools.browser_navigate,
+            "browser_click": self.interaction_tools.browser_click,
+            "browser_fill": self.interaction_tools.browser_fill,
+            "browser_snapshot": self.interaction_tools.browser_snapshot,
+            "browser_screenshot": self.interaction_tools.browser_screenshot,
+            "browser_scroll": self.interaction_tools.browser_scroll,
             # Process & Dev Server Tools
             "execute_command": self.execute_command,
             "run_background_command": self.run_background_command,
             "stop_background_command": self.stop_background_command,
-            # Specialized Subagents
+            # Subagent Delegation & Peer Coordination Tools
+            "task": self.task,
+            "hub": self.hub,
+            "yield": self.yield_fn,
+            # Backward compatibility aliases
             "invoke_design_agent": self.invoke_design_agent,
             "invoke_troubleshoot_agent": self.invoke_troubleshoot_agent,
             "invoke_vision_agent": self.invoke_vision_agent,
@@ -235,6 +217,7 @@ class ToolRegistry:
             self.map_dependencies,
             self.mount_file,
             self.unmount_file,
+            self.close_file,
             self.list_mounted_files,
             self.lint_javascript,
             self.get_assets,
@@ -383,55 +366,67 @@ class ToolRegistry:
 
     def cleanup(self):
         self.process_tools.cleanup()
+        if hasattr(self, "interaction_tools"):
+            self.interaction_tools.cleanup()
 
     # ─────────────────────────────────────────────────────────────
     # Delegated Subagent Operations
     # ─────────────────────────────────────────────────────────────
 
-    def invoke_design_agent(
+    async def task(self, **kwargs) -> str:
+        """Delegate tasks to specialized background subagents."""
+        res = await self.task_tool.execute(
+            tool_call_id="call",
+            raw_params=kwargs,
+            context={"project_root": self.sandbox_path, "task_depth": 0},
+            event_callback=self.event_callback,
+        )
+        return res["content"][0]["text"]
+
+    async def hub(self, **kwargs) -> str:
+        """Agent coordination: peer messaging, background-job control, and process supervision."""
+        return await self.hub_tool.execute(**kwargs)
+
+    def yield_fn(self, **kwargs) -> str:
+        """Mandatory tool for subagents to deliver final findings or blocker errors."""
+        return self.yield_tool.execute(**kwargs)
+
+    async def invoke_design_agent(
         self,
         problem_statement: str,
         app_type: str = "saas_app",
         theme_preference: str = "",
         auto_apply_css: bool = True,
     ) -> str:
-        """Invoke the specialized Design Subagent to generate cohesive UI/UX tokens, Google Font pairings, and layout blueprints."""
-        self.design_subagent.model_name = self.model_name
-        return self.design_subagent.generate_layout_blueprint(
-            problem_statement=problem_statement,
-            app_type=app_type,
-            theme_preference=theme_preference,
-            auto_apply_css=auto_apply_css,
+        """Invoke the specialized Design Subagent via unified task delegation."""
+        return await self.task(
+            agent="design",
+            task=f"Problem statement: {problem_statement}\nApp type: {app_type}\nTheme preference: {theme_preference}\nAuto-apply CSS: {auto_apply_css}",
         )
 
-    def invoke_troubleshoot_agent(
+    async def invoke_troubleshoot_agent(
         self,
         error_log: str,
         context_file: str = "",
         recent_actions: str = "",
     ) -> str:
-        """Invoke the specialized Troubleshoot Subagent to perform root-cause analysis and generate actionable fixes."""
-        self.troubleshoot_subagent.model_name = self.model_name
-        return self.troubleshoot_subagent.diagnose_error(
-            error_log=error_log,
-            context_file=context_file,
-            recent_actions=recent_actions,
+        """Invoke the specialized Troubleshoot Subagent via unified task delegation."""
+        return await self.task(
+            agent="troubleshoot",
+            task=f"Diagnose error: {error_log}\nContext file: {context_file}\nRecent actions: {recent_actions}",
         )
 
-    def invoke_vision_agent(
+    async def invoke_vision_agent(
         self,
         target_component_or_file: str = "",
         screenshot_base64: str = "",
         design_intent: str = "",
     ) -> str:
-        """Invoke the specialized Vision Expert Subagent to audit UI layout balance, color contrast, and micro-interactions."""
-        self.vision_subagent.model_name = self.model_name
-        return self.vision_subagent.critique_ui(
-            target_component_or_file=target_component_or_file,
-            screenshot_base64=screenshot_base64,
-            design_intent=design_intent,
+        """Invoke the specialized Vision Expert Subagent via unified task delegation."""
+        return await self.task(
+            agent="scout",
+            task=f"Audit visual component: {target_component_or_file}\nDesign intent: {design_intent}",
         )
-
     def get_dev_server_info(self) -> Optional[Dict[str, Any]]:
         """Returns metadata about the active development server."""
         return self.process_tools.get_dev_server_info()
@@ -447,36 +442,20 @@ class ToolRegistry:
                 return res["url"]
         return "http://localhost:3000"
 
-    def invoke_testing_agent(self, url: str = "", instructions: str = "") -> str:
-        """Invoke the specialized UI & Browser Testing Subagent to verify webpage functionality, DOM interactions, and user flows."""
-        self.ui_testing_subagent.model_name = self.model_name
-
-        # Resolve the true running dev server info
-        dev_info = self.process_tools.get_dev_server_info()
-        dev_url = dev_info.get("url") if dev_info else None
-        backend_port = str(dev_info.get("backend_port")) if dev_info else "5001"
-
-        # If url is omitted, empty, Vite default 5173, or points to the backend API port, auto-resolve
-        clean_url = (url or "").strip().rstrip("/")
-        if (
-            not clean_url
-            or clean_url == "http://localhost:5173"
-            or clean_url.endswith(f":{backend_port}")
-            or f":{backend_port}/" in clean_url
-        ):
-            resolved_url = dev_url or self.get_dev_server_url()
-        else:
-            resolved_url = clean_url
-
-        return self.ui_testing_subagent.run_ui_test(resolved_url, instructions)
-
-    def invoke_code_reviewer_agent(self, target_files: str = "", focus_areas: str = "") -> str:
-        """Invoke the specialized Code Reviewer Subagent to audit code correctness, security, Express routes, and React best practices."""
-        self.code_reviewer_subagent.model_name = self.model_name
-        return self.code_reviewer_subagent.review_code(
-            target_files=target_files,
-            focus_areas=focus_areas,
+    async def invoke_testing_agent(self, url: str = "", instructions: str = "") -> str:
+        """Invoke the specialized UI & Browser Testing Subagent via unified task delegation."""
+        dev_url = self.get_dev_server_url()
+        resolved_url = url or dev_url
+        return await self.task(
+            agent="tester",
+            task=f"Test URL: {resolved_url}\nInstructions: {instructions}",
         )
 
+    async def invoke_code_reviewer_agent(self, target_files: str = "", focus_areas: str = "") -> str:
+        """Invoke the specialized Code Reviewer Subagent via unified task delegation."""
+        return await self.task(
+            agent="reviewer",
+            task=f"Target files: {target_files or 'All project files'}\nFocus areas: {focus_areas or 'General code quality and security'}",
+        )
 
 

@@ -14,11 +14,6 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from context.config import (
     ContextConfig,
     ALERT_EVICTION_MARKER,
-    RECENCY_ANCHOR_DEFAULT,
-    RECENCY_ANCHOR_CONFIRMATION,
-    RECENCY_ANCHOR_ERROR,
-    RECENCY_ANCHOR_CONVERSATIONAL,
-    RECENCY_ANCHOR_FIRST_MESSAGE,
 )
 
 from context.estimator import TokenEstimator
@@ -178,10 +173,6 @@ class ContextManager:
                 clean_user = content
                 if ALERT_EVICTION_MARKER in clean_user:
                     clean_user = clean_user.replace(ALERT_EVICTION_MARKER, "").strip()
-                if "\n\n[Instruction:" in clean_user:
-                    clean_user = clean_user.split("\n\n[Instruction:")[0].strip()
-                if "\n\n[Project Context" in clean_user:
-                    clean_user = clean_user.split("\n\n[Project Context")[0].strip()
                 current_user = clean_user
 
             elif role == "tool":
@@ -223,6 +214,20 @@ class ContextManager:
                                 if opts and isinstance(opts, list):
                                     q_str += f" (Options: {', '.join(str(o) for o in opts)})"
                                 asked_questions.append(q_str)
+                        elif fn_name == "task":
+                            ag = args.get("agent", "task")
+                            if ag == "scout":
+                                invoked_actions.append("Explored codebase structure and architecture")
+                            elif ag == "reviewer":
+                                invoked_actions.append("Audited code quality, security, and React/Express architecture")
+                            elif ag == "troubleshoot":
+                                invoked_actions.append("Diagnosed runtime issue with Troubleshoot subagent")
+                            elif ag == "design":
+                                invoked_actions.append("Applied design system tokens to src/index.css")
+                            elif ag == "tester":
+                                invoked_actions.append("Ran automated UI verification tests")
+                            else:
+                                invoked_actions.append(f"Delegated task to {ag} subagent")
                         elif fn_name == "invoke_design_agent":
                             invoked_actions.append("Applied design system tokens to src/index.css")
                         elif fn_name == "invoke_troubleshoot_agent":
@@ -470,7 +475,7 @@ class ContextManager:
         Prepares message history for a new user turn:
         1. Compacts prior completed turns into clean, code-free user/assistant pairs.
         2. Preserves in-flight questions asked via ask_human.
-        3. Detects confirmations ("yes", "continue") or errors and injects targeted action anchors.
+        3. Appends the new user prompt.
         4. Runs macro-compaction if total token estimate exceeds compact_threshold.
         5. Mounts discovered Static Layer repository rules if project_root provided and not already present.
         6. Mounts Dynamic Virtual RAM Register if mounted_virtual_ram provided.
@@ -501,63 +506,8 @@ class ContextManager:
         existing_messages.append({"role": "system", "content": effective_system_prompt})
         existing_messages.extend(compacted_history)
 
-        # 3. Determine targeted recency anchor
-        clean_prompt_lower = user_prompt.strip().lower()
-        confirmation_tokens = {
-            "yes", "y", "sure", "ok", "okay", "continue", "please continue",
-            "proceed", "go ahead", "start", "do it", "approved", "confirm"
-        }
-        is_confirmation = clean_prompt_lower in confirmation_tokens
-        last_turn_had_question = bool(
-            compacted_history and "Question asked:" in compacted_history[-1].get("content", "")
-        )
-
-        # Word boundary matching for errors and exceptions
-        error_pattern = r"\b(error|errors|fail|failed|failure|crash|crashed|syntaxerror|typeerror|referenceerror|exception)\b"
-        negation_pattern = r"\b(no|without|zero|not an?|never)\s+(error|errors|fail|failure|crash|exception)\b"
-        has_error_mention = bool(re.search(error_pattern, clean_prompt_lower))
-        is_negated_error = bool(re.search(negation_pattern, clean_prompt_lower))
-        is_error = has_error_mention and not is_negated_error
-
-        # Detect informational / conversational questions vs active code-writing actions
-        action_keywords = [
-            "build", "create", "make", "add", "implement", "fix", "update", "delete",
-            "remove", "install", "run", "write", "change", "style", "refactor", "generate"
-        ]
-        is_action_request = any(kw in clean_prompt_lower for kw in action_keywords)
-
-        conversational_prefixes = [
-            "what", "why", "who", "where", "when", "how", "can you explain", "explain",
-            "tell me", "which", "list", "describe", "do you know", "do you remember"
-        ]
-        is_conversational = (
-            any(clean_prompt_lower.startswith(prefix) for prefix in conversational_prefixes)
-            or clean_prompt_lower.endswith("?")
-        )
-
-        # Detect first message in session (no prior conversation history)
-        is_first_message = len(compacted_history) == 0
-
-        # Precedence:
-        # 0. First message in session — inject project context anchor
-        # 1. User confirmation or answer to an ask_human question
-        # 2. Informational Q&A (even if the word 'error' is mentioned in an educational query)
-        # 3. Actionable error or crash report requiring repair
-        # 4. Default disk-first action anchor
-        if is_first_message:
-            anchor = RECENCY_ANCHOR_FIRST_MESSAGE
-        elif is_confirmation or (last_turn_had_question and not is_action_request and not is_conversational):
-            anchor = RECENCY_ANCHOR_CONFIRMATION
-        elif is_conversational and not is_action_request:
-            anchor = RECENCY_ANCHOR_CONVERSATIONAL
-        elif is_error:
-            anchor = RECENCY_ANCHOR_ERROR
-        else:
-            anchor = RECENCY_ANCHOR_DEFAULT
-
-
-        anchored_user_prompt = f"{user_prompt.strip()}{anchor}"
-        existing_messages.append({"role": "user", "content": anchored_user_prompt})
+        # 3. Append user prompt
+        existing_messages.append({"role": "user", "content": user_prompt.strip()})
 
         # 4. Check if token count exceeds compact threshold (82%)
         total_tokens = TokenEstimator.estimate_total(existing_messages, tools=tools, virtual_ram=mounted_virtual_ram)
@@ -715,16 +665,23 @@ class ContextManager:
             static_tokens = 0
 
         # Virtual RAM accounting
+        virtual_ram_files_list: List[str] = []
         if mounted_virtual_ram:
             ram_tokens = TokenEstimator.estimate_virtual_ram(mounted_virtual_ram)
             ram_files = len(mounted_virtual_ram)
+            virtual_ram_files_list = sorted(list(mounted_virtual_ram.keys()))
         elif ram_in_static and ram_block_content:
             ram_tokens = TokenEstimator.estimate_text(ram_block_content)
             ram_files = ram_block_content.count("--- FILE: ")
+            for line in ram_block_content.splitlines():
+                if line.startswith("--- FILE: "):
+                    parts = line.split("--- FILE: ")[1].split(" (")
+                    if parts:
+                        virtual_ram_files_list.append(parts[0].strip())
+            virtual_ram_files_list.sort()
         else:
             ram_tokens = 0
             ram_files = 0
-
         schema_tokens = TokenEstimator.estimate_schemas(tools) if tools else 0
         ephemeral_tokens = sum(TokenEstimator.estimate_message(m) for m in messages if m is not static_msg)
 
@@ -773,6 +730,7 @@ class ContextManager:
             "static_pct": static_pct,
             "virtual_ram_tokens": ram_tokens,
             "virtual_ram_files": ram_files,
+            "virtual_ram_files_list": virtual_ram_files_list,
             "virtual_ram_pct": ram_pct,
             "ephemeral_tokens": ephemeral_tokens,
             "ephemeral_pct": ephemeral_pct,

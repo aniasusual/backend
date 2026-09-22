@@ -40,10 +40,6 @@ class ContextCompactor:
                 clean_user = content
                 if ALERT_EVICTION_MARKER in clean_user:
                     clean_user = clean_user.replace(ALERT_EVICTION_MARKER, "").strip()
-                if "\n\n[Instruction:" in clean_user:
-                    clean_user = clean_user.split("\n\n[Instruction:")[0].strip()
-                if "\n\n[Project Context" in clean_user:
-                    clean_user = clean_user.split("\n\n[Project Context")[0].strip()
                 if clean_user and clean_user.lower() not in ["yes", "continue", "proceed", "sure"]:
                     if clean_user not in user_requests:
                         user_requests.append(clean_user)
@@ -60,7 +56,21 @@ class ContextCompactor:
                             except Exception:
                                 args = {}
 
-                        if fn_name == "invoke_design_agent":
+                        if fn_name == "task":
+                            ag = args.get("agent", "task")
+                            if ag == "scout":
+                                completed_actions.append("Explored codebase structure and architecture")
+                            elif ag == "reviewer":
+                                completed_actions.append("Audited code quality, security, and React/Express architecture")
+                            elif ag == "troubleshoot":
+                                completed_actions.append("Diagnosed and resolved runtime errors")
+                            elif ag == "design":
+                                completed_actions.append("Initialized UI/UX design tokens in src/index.css")
+                            elif ag == "tester":
+                                completed_actions.append("Ran automated browser UI tests")
+                            else:
+                                completed_actions.append(f"Delegated task to {ag} subagent")
+                        elif fn_name == "invoke_design_agent":
                             completed_actions.append("Initialized UI/UX design tokens in src/index.css")
                         elif fn_name == "invoke_troubleshoot_agent":
                             completed_actions.append("Diagnosed and resolved runtime errors")

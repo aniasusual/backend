@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 from plugins.coding_harness import CodingHarness
 from context.config import ContextConfig
 from config.models import get_model_context_window
-from subagents.runner import SubagentRunner
+from task import run_subprocess, AgentDefinition
 
 
 class TestHarnessContextWindow(unittest.IsolatedAsyncioTestCase):
@@ -278,39 +278,34 @@ class TestHarnessContextWindow(unittest.IsolatedAsyncioTestCase):
             options = mock_client.chat.call_args.kwargs.get("options", {})
             self.assertEqual(options.get("num_ctx"), 32768)
 
-    def test_subagent_runner_passes_num_ctx(self):
-        """Verify SubagentRunner passes num_ctx in options when invoking client.chat()."""
-        runner = SubagentRunner(
-            name="TestSubagent",
-            system_prompt="You are a test helper.",
-            allowed_tools={"read_file"},
-            model_name="qwen2.5-coder:14b",
-            max_iterations=1,
-        )
-
+    async def test_subagent_runner_passes_num_ctx(self):
+        """Verify task executor passes num_ctx in options when invoking client.chat()."""
         mock_response = {
             "message": {
                 "role": "assistant",
-                "content": "Finished subagent inspection.",
-                "tool_calls": [],
+                "content": "",
+                "tool_calls": [{"function": {"name": "yield", "arguments": {"data": {"done": True}}}}],
             },
             "prompt_eval_count": 50,
             "eval_count": 20,
         }
+        mock_client = MagicMock()
+        mock_client.chat.return_value = mock_response
 
-        with patch("ollama.Client") as mock_client_cls:
-            mock_client = MagicMock()
-            mock_client.chat.return_value = mock_response
-            mock_client_cls.return_value = mock_client
+        defn = AgentDefinition(name="TestSubagent", description="Helper", tools=["read_file"])
+        await run_subprocess(
+            id="test_sub_ctx",
+            agent_definition=defn,
+            assignment="Inspect the codebase.",
+            tool_registry=MagicMock(),
+            client=mock_client,
+        )
 
-            result = runner.run("Inspect the codebase.")
-
-            self.assertTrue(mock_client.chat.called)
-            call_kwargs = mock_client.chat.call_args.kwargs
-            self.assertIn("options", call_kwargs)
-            options = call_kwargs["options"]
-            self.assertEqual(options.get("num_ctx"), 16384)
-
+        self.assertTrue(mock_client.chat.called)
+        call_kwargs = mock_client.chat.call_args.kwargs
+        self.assertIn("options", call_kwargs)
+        options = call_kwargs["options"]
+        self.assertEqual(options.get("num_ctx"), 16384)
     async def test_coding_harness_ingestion_compression_and_no_directions(self):
         """Verify CodingHarness compresses >1.8k char tool outputs and does NOT append synthetic directions."""
         import tempfile

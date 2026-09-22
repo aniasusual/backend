@@ -11,40 +11,22 @@ TOOL_SCHEMAS = [
                 "properties": {
                     "file_path": {
                         "type": "string",
-                        "description": "The relative path to the file to read.",
+                        "description": "The relative path to the file to read."
                     },
                     "start_line": {
                         "type": "integer",
-                        "description": "Optional 1-indexed starting line number (default: 1).",
+                        "description": "Optional 1-indexed starting line number (default: 1)."
                     },
                     "end_line": {
                         "type": "integer",
-                        "description": "Optional 1-indexed ending line number (default: min(start_line + 249, end of file); maximum 250 lines per call).",
-                    },
+                        "description": "Optional 1-indexed ending line number (default: min(start_line + 249, end of file); maximum 250 lines per call)."
+                    }
                 },
-                "required": ["file_path"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "view_bulk",
-            "description": "View the contents of multiple files in a single batched operation. Ideal for exploring package.json, server/index.js, and src/App.jsx in 1 turn without multiple calls.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "files": {
-                        "type": "array",
-                        "description": "List of relative file paths to view in bulk (e.g. ['src/App.jsx', 'server/index.js', 'package.json']).",
-                        "items": {
-                            "type": "string",
-                        },
-                    },
-                },
-                "required": ["files"],
-            },
-        },
+                "required": [
+                    "file_path"
+                ]
+            }
+        }
     },
     {
         "type": "function",
@@ -56,16 +38,18 @@ TOOL_SCHEMAS = [
                 "properties": {
                     "pattern": {
                         "type": "string",
-                        "description": "The glob pattern to match files against (e.g. '*.js', 'src/**/*.jsx').",
+                        "description": "The glob pattern to match files against (e.g. '*.js', 'src/**/*.jsx')."
                     },
                     "path": {
                         "type": "string",
-                        "description": "The relative directory to search within (default: current workspace root).",
-                    },
+                        "description": "The relative directory to search within (default: current workspace root)."
+                    }
                 },
-                "required": ["pattern"],
-            },
-        },
+                "required": [
+                    "pattern"
+                ]
+            }
+        }
     },
     {
         "type": "function",
@@ -77,16 +61,18 @@ TOOL_SCHEMAS = [
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "The search term or regex pattern to look for.",
+                        "description": "The search term or regex pattern to look for."
                     },
                     "path": {
                         "type": "string",
-                        "description": "The relative path or directory to search within (default: entire workspace).",
-                    },
+                        "description": "The relative path or directory to search within (default: entire workspace)."
+                    }
                 },
-                "required": ["query"],
-            },
-        },
+                "required": [
+                    "query"
+                ]
+            }
+        }
     },
     {
         "type": "function",
@@ -98,72 +84,19 @@ TOOL_SCHEMAS = [
                 "properties": {
                     "file_path": {
                         "type": "string",
-                        "description": "The relative path to the file to write.",
+                        "description": "The relative path to the file to write."
                     },
                     "content": {
                         "type": "string",
-                        "description": "The full content to write to the file.",
-                    },
+                        "description": "The full content to write to the file."
+                    }
                 },
-                "required": ["file_path", "content"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "write_files",
-            "description": "Write content to multiple files in a single atomic batch operation. RECOMMENDED for initial application builds to write both 'server/index.js' (Express backend) and 'src/App.jsx' (React frontend) in 1 turn.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "files": {
-                        "type": "array",
-                        "description": "List of file objects with 'file_path' and 'content'.",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "file_path": {
-                                    "type": "string",
-                                    "description": "The relative path to the file to write.",
-                                },
-                                "content": {
-                                    "type": "string",
-                                    "description": "The full content to write to the file.",
-                                },
-                            },
-                            "required": ["file_path", "content"],
-                        },
-                    },
-                },
-                "required": ["files"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "insert_text",
-            "description": "Insert text directly after a specific 1-indexed line number in a file without needing string matching.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "The relative path to the file to modify.",
-                    },
-                    "line_number": {
-                        "type": "integer",
-                        "description": "The 1-indexed line number after which to insert the text (0 to insert at the top).",
-                    },
-                    "text": {
-                        "type": "string",
-                        "description": "The text to insert.",
-                    },
-                },
-                "required": ["file_path", "line_number", "text"],
-            },
-        },
+                "required": [
+                    "file_path",
+                    "content"
+                ]
+            }
+        }
     },
     {
         "type": "function",
@@ -175,41 +108,28 @@ TOOL_SCHEMAS = [
                 "properties": {
                     "file_path": {
                         "type": "string",
-                        "description": "The relative path to the file to edit.",
+                        "description": "The relative path to the file to edit."
                     },
                     "old_text": {
                         "type": "string",
-                        "description": "The code snippet to find and replace. Include surrounding lines for unique context.",
+                        "description": "The code snippet to find and replace. Include surrounding lines for unique context."
                     },
                     "new_text": {
                         "type": "string",
-                        "description": "The replacement code.",
+                        "description": "The replacement code."
                     },
                     "replace_all": {
                         "type": "boolean",
-                        "description": "Replace all occurrences of old_text across the file (default: false). Use this to rename variables, components, or imports.",
-                    },
-                },
-                "required": ["file_path", "old_text", "new_text"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "list_directory",
-            "description": "List the contents of a directory, showing files and subdirectories.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "The relative path to the directory. Defaults to current directory.",
+                        "description": "Replace all occurrences of old_text across the file (default: False). Use this to rename variables, components, or imports."
                     }
                 },
-                "required": [],
-            },
-        },
+                "required": [
+                    "file_path",
+                    "old_text",
+                    "new_text"
+                ]
+            }
+        }
     },
     {
         "type": "function",
@@ -221,20 +141,20 @@ TOOL_SCHEMAS = [
                 "properties": {
                     "directory": {
                         "type": "string",
-                        "description": "The relative path to the directory to explore (default: '.').",
+                        "description": "The relative path to the directory to explore (default: '.')."
                     },
                     "max_depth": {
                         "type": "integer",
-                        "description": "Maximum directory traversal depth (default: 3, max: 10).",
+                        "description": "Maximum directory traversal depth (default: 3, max: 10)."
                     },
                     "pattern": {
                         "type": "string",
-                        "description": "File pattern to filter results (e.g. '*.js', '*.jsx', default: '*').",
-                    },
+                        "description": "File pattern to filter results (e.g. '*.js', '*.jsx', default: '*')."
+                    }
                 },
-                "required": [],
-            },
-        },
+                "required": []
+            }
+        }
     },
     {
         "type": "function",
@@ -246,12 +166,12 @@ TOOL_SCHEMAS = [
                 "properties": {
                     "file_path": {
                         "type": "string",
-                        "description": "The relative file path or directory to lint (e.g. 'src/App.jsx', 'server/index.js', 'src'). Defaults to whole workspace.",
-                    },
+                        "description": "The relative file path or directory to lint (e.g. 'src/App.jsx', 'server/index.js', 'src'). Defaults to whole workspace."
+                    }
                 },
-                "required": [],
-            },
-        },
+                "required": []
+            }
+        }
     },
     {
         "type": "function",
@@ -263,20 +183,22 @@ TOOL_SCHEMAS = [
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Keywords describing the asset or topic (e.g. 'avatar', 'tech hero', 'dashboard analytics', 'sneaker product', 'burger', 'finance').",
+                        "description": "Keywords describing the asset or topic (e.g. 'avatar', 'tech hero', 'dashboard analytics', 'sneaker product', 'burger', 'finance')."
                     },
                     "category": {
                         "type": "string",
-                        "description": "Optional category filter: 'avatar', 'hero', 'product', 'finance', 'food', 'nature'.",
+                        "description": "Optional category filter: 'avatar', 'hero', 'product', 'finance', 'food', 'nature'."
                     },
                     "count": {
                         "type": "integer",
-                        "description": "Number of asset suggestions to return (default: 5).",
-                    },
+                        "description": "Number of asset suggestions to return (default: 5)."
+                    }
                 },
-                "required": ["query"],
-            },
-        },
+                "required": [
+                    "query"
+                ]
+            }
+        }
     },
     {
         "type": "function",
@@ -288,19 +210,21 @@ TOOL_SCHEMAS = [
                 "properties": {
                     "question": {
                         "type": "string",
-                        "description": "The question or prompt to ask the user.",
+                        "description": "The question or prompt to ask the user."
                     },
                     "options": {
                         "type": "array",
                         "description": "Optional list of selectable option strings to make user response easy.",
                         "items": {
-                            "type": "string",
-                        },
-                    },
+                            "type": "string"
+                        }
+                    }
                 },
-                "required": ["question"],
-            },
-        },
+                "required": [
+                    "question"
+                ]
+            }
+        }
     },
     {
         "type": "function",
@@ -312,90 +236,250 @@ TOOL_SCHEMAS = [
                 "properties": {
                     "summary": {
                         "type": "string",
-                        "description": "Detailed summary of all completed tasks, files created/modified, and verification status.",
+                        "description": "Detailed summary of all completed tasks, files created/modified, and verification status."
                     },
                     "next_steps": {
                         "type": "string",
-                        "description": "Optional recommended next steps for the user (e.g. how to test or run).",
-                    },
+                        "description": "Optional recommended next steps for the user (e.g. how to test or run)."
+                    }
                 },
-                "required": ["summary"],
-            },
-        },
+                "required": [
+                    "summary"
+                ]
+            }
+        }
     },
     {
         "type": "function",
         "function": {
-            "name": "invoke_design_agent",
-            "description": "OPTIONAL: Invoke the specialized UI/UX Design Subagent to generate a brand new CSS design system in 'src/index.css' and component architecture blueprint. Use ONLY when the user explicitly requests a complete design system or theme overhaul from scratch. Does NOT write src/App.jsx or server/index.js.",
+            "name": "task",
+            "description": "Delegate tasks to specialized background subagents. Supports single-agent spawn ({agent, task}) or concurrent batch-agent spawns ({context, tasks}).",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "problem_statement": {
+                    "agent": {
                         "type": "string",
-                        "description": "Raw problem statement or requirements from the user describing the desired app.",
+                        "description": "Agent role name (e.g. 'task', 'scout', 'reviewer', 'security_reviewer', 'troubleshoot', 'design', 'tester'). Defaults to 'task'."
                     },
-                    "app_type": {
+                    "task": {
                         "type": "string",
-                        "description": "The category of app (e.g. 'dashboard', 'ecommerce', 'saas_app', 'portfolio', 'landing_page', 'fintech', 'healthcare').",
+                        "description": "Complete, self-contained instructions for the subagent."
                     },
-                    "theme_preference": {
+                    "name": {
                         "type": "string",
-                        "description": "Optional user visual preferences (e.g. 'dark mode', 'glassmorphism', 'emerald finance', 'cyberpunk neon').",
+                        "description": "Optional label or handle for this subagent."
                     },
-                },
-                "required": ["problem_statement"],
-            },
-        },
+                    "context": {
+                        "type": "string",
+                        "description": "Shared background context, contracts, and goals (required when spawning batch tasks)."
+                    },
+                    "tasks": {
+                        "type": "array",
+                        "description": "List of task items to spawn concurrently in batch mode.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {
+                                    "type": "string"
+                                },
+                                "agent": {
+                                    "type": "string"
+                                },
+                                "task": {
+                                    "type": "string"
+                                },
+                                "tools": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string"
+                                    }
+                                },
+                                "isolated": {
+                                    "type": "boolean"
+                                }
+                            },
+                            "required": [
+                                "task"
+                            ]
+                        }
+                    },
+                    "tools": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": "Optional explicit tool names to grant this subagent."
+                    },
+                    "isolated": {
+                        "type": "boolean",
+                        "description": "Run subagent in an isolated Git worktree."
+                    }
+                }
+            }
+        }
     },
     {
         "type": "function",
         "function": {
-            "name": "invoke_troubleshoot_agent",
-            "description": "Invoke the specialized Troubleshoot Subagent to perform deep root cause analysis (RCA) on compiler output, Vite build failures, runtime exceptions, and API 500 errors, returning exact surgical fix patches.",
+            "name": "hub",
+            "description": "Agent coordination: peer messaging, background-job control, and process supervision.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "error_log": {
+                    "op": {
                         "type": "string",
-                        "description": "The exact compiler output, runtime stack trace, or error message to diagnose.",
+                        "enum": [
+                            "send",
+                            "wait",
+                            "inbox",
+                            "list",
+                            "jobs",
+                            "cancel"
+                        ],
+                        "description": "Hub operation to perform."
                     },
-                    "context_file": {
+                    "to": {
                         "type": "string",
-                        "description": "Optional relative path to the file suspected of causing the error (e.g. 'src/App.jsx').",
+                        "description": "Recipient agent ID or 'all' to broadcast."
                     },
-                    "recent_actions": {
+                    "message": {
                         "type": "string",
-                        "description": "Optional brief description of what was done right before the error occurred.",
+                        "description": "Message content to send to peer."
                     },
+                    "reply_to": {
+                        "type": "string",
+                        "description": "ID of message being answered."
+                    },
+                    "ids": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": "Job IDs to cancel or query."
+                    },
+                    "timeout": {
+                        "type": "number",
+                        "description": "Seconds to wait for incoming message."
+                    }
                 },
-                "required": ["error_log"],
-            },
-        },
+                "required": [
+                    "op"
+                ]
+            }
+        }
     },
     {
         "type": "function",
         "function": {
-            "name": "invoke_vision_agent",
-            "description": "Invoke the specialized Vision Expert Subagent to audit UI layout balance, visual hierarchy, color contrast ratios (WCAG AA), and curate missing visual assets.",
+            "name": "browser_navigate",
+            "description": "Navigate the headless browser to a specified application URL (e.g. 'http://localhost:3000'). Returns live DOM interactive elements, page title, and in-DOM errors.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "target_component_or_file": {
+                    "url": {
                         "type": "string",
-                        "description": "Optional relative path to the UI component file to audit (e.g. 'src/App.jsx').",
-                    },
-                    "screenshot_base64": {
-                        "type": "string",
-                        "description": "Optional base64 encoded screenshot image string of the rendered UI.",
-                    },
-                    "design_intent": {
-                        "type": "string",
-                        "description": "Optional description of the desired design aesthetic or user requirements.",
-                    },
+                        "description": "Target webpage URL to open."
+                    }
                 },
-            },
-        },
+                "required": [
+                    "url"
+                ]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_click",
+            "description": "Click on an interactive element by data-sdet-id (e.g. 'el_0', 'el_1') or CSS selector.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "selector": {
+                        "type": "string",
+                        "description": "Element ID (e.g. 'el_0') or CSS selector to click."
+                    }
+                },
+                "required": [
+                    "selector"
+                ]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_fill",
+            "description": "Fill an input field or textarea with text using an element ID (e.g. 'el_1') or CSS selector.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "selector": {
+                        "type": "string",
+                        "description": "Element ID or CSS selector of input field."
+                    },
+                    "value": {
+                        "type": "string",
+                        "description": "Text string to enter into the input."
+                    }
+                },
+                "required": [
+                    "selector",
+                    "value"
+                ]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_snapshot",
+            "description": "Inspect the current DOM state, visible interactive buttons, inputs, links, and active console/in-DOM errors.",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_screenshot",
+            "description": "Capture a screenshot of the currently rendered web page.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "Optional destination path to save PNG screenshot."
+                    }
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_scroll",
+            "description": "Scroll the active webpage 'up' or 'down' by a specified pixel amount.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "direction": {
+                        "type": "string",
+                        "enum": [
+                            "up",
+                            "down"
+                        ],
+                        "description": "Direction to scroll."
+                    },
+                    "amount": {
+                        "type": "integer",
+                        "description": "Pixel amount to scroll (default: 500)."
+                    }
+                }
+            }
+        }
     },
     {
         "type": "function",
@@ -407,100 +491,19 @@ TOOL_SCHEMAS = [
                 "properties": {
                     "command": {
                         "type": "string",
-                        "description": "The shell command to execute (e.g. 'npm install recharts', 'npm ls').",
+                        "description": "The shell command to execute (e.g. 'npm install recharts', 'npm ls')."
                     },
                     "reason": {
                         "type": "string",
-                        "description": "A short explanation of why this command needs to be executed.",
+                        "description": "A short explanation of why this command needs to be executed."
                     }
                 },
-                "required": ["command", "reason"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "run_background_command",
-            "description": "Run a long-running process in the background. Note: The main fullstack dev server is already running automatically in the background; only use this for custom auxiliary background tasks.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "command": {
-                        "type": "string",
-                        "description": "The shell command to start in the background.",
-                    },
-                    "log_filename": {
-                        "type": "string",
-                        "description": "Log filename to append output to (default: server.log).",
-                    },
-                    "reason": {
-                        "type": "string",
-                        "description": "A short explanation of why this command needs to be executed in the background.",
-                    }
-                },
-                "required": ["command", "reason"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "stop_background_command",
-            "description": "Stop a running background process by its PID.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "pid": {
-                        "type": "integer",
-                        "description": "The process ID (PID) of the background command to terminate.",
-                    }
-                },
-                "required": ["pid"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "invoke_testing_agent",
-            "description": "Invoke the specialized UI & Browser Testing Subagent to autonomously drive a headless browser, click buttons, fill forms, and verify interactive workflows.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "url": {
-                        "type": "string",
-                        "description": "Optional: Target web application URL to test. Defaults automatically to the active live preview server (e.g. 'http://localhost:3000').",
-                    },
-                    "instructions": {
-                        "type": "string",
-                        "description": "Detailed plain-text instructions on what user flows, buttons, and views to test.",
-                    },
-                },
-                "required": ["instructions"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "invoke_code_reviewer_agent",
-            "description": "Invoke the specialized Senior Staff Code Reviewer Subagent to audit code correctness, OWASP security vulnerabilities, Express async route error handling, and React performance.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "target_files": {
-                        "type": "string",
-                        "description": "Optional comma-separated list of relative file paths to inspect (e.g. 'src/App.jsx, server/index.js'). If empty, automatically discovers and audits all source code files across src/ and server/.",
-                    },
-                    "focus_areas": {
-                        "type": "string",
-                        "description": "Optional specific focus areas to audit (e.g. 'security, error handling, state mutations, performance').",
-                    },
-                },
-                "required": [],
-            },
-        },
+                "required": [
+                    "command",
+                    "reason"
+                ]
+            }
+        }
     },
     {
         "type": "function",
@@ -512,12 +515,14 @@ TOOL_SCHEMAS = [
                 "properties": {
                     "file_path": {
                         "type": "string",
-                        "description": "The relative path to the workspace file to mount into Virtual RAM (e.g. 'src/App.jsx').",
-                    },
+                        "description": "The relative path to the workspace file to mount into Virtual RAM (e.g. 'src/App.jsx')."
+                    }
                 },
-                "required": ["file_path"],
-            },
-        },
+                "required": [
+                    "file_path"
+                ]
+            }
+        }
     },
     {
         "type": "function",
@@ -529,41 +534,14 @@ TOOL_SCHEMAS = [
                 "properties": {
                     "file_path": {
                         "type": "string",
-                        "description": "The relative path to the mounted file to remove from Virtual RAM (e.g. 'src/App.jsx').",
-                    },
+                        "description": "The relative path to the mounted file to remove from Virtual RAM (e.g. 'src/App.jsx')."
+                    }
                 },
-                "required": ["file_path"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "close_file",
-            "description": "Alias for unmount_file. Unmounts an active workspace file from Dynamic Virtual RAM, releasing working memory attention and token budget.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "The relative path to the mounted file to remove from Virtual RAM (e.g. 'src/App.jsx').",
-                    },
-                },
-                "required": ["file_path"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "list_mounted_files",
-            "description": "Lists all files currently mounted in Dynamic Virtual RAM, along with their line counts, token usage, and remaining budget capacity.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-            },
-        },
+                "required": [
+                    "file_path"
+                ]
+            }
+        }
     },
     {
         "type": "function",
@@ -575,12 +553,14 @@ TOOL_SCHEMAS = [
                 "properties": {
                     "file_path": {
                         "type": "string",
-                        "description": "The relative path to the source code file to extract signatures from (e.g. 'server/index.js', 'src/App.jsx', 'app.py').",
-                    },
+                        "description": "The relative path to the source code file to extract signatures from (e.g. 'server/index.js', 'src/App.jsx', 'app.py')."
+                    }
                 },
-                "required": ["file_path"],
-            },
-        },
+                "required": [
+                    "file_path"
+                ]
+            }
+        }
     },
     {
         "type": "function",
@@ -592,12 +572,12 @@ TOOL_SCHEMAS = [
                 "properties": {
                     "target_file": {
                         "type": "string",
-                        "description": "Optional relative path to a specific file to audit for dependencies and downstream impact (e.g. 'src/components/TodoItem.jsx', 'server/routes/items.js'). If omitted, maps the entire workspace.",
-                    },
+                        "description": "Optional relative path to a specific file to audit for dependencies and downstream impact (e.g. 'src/components/TodoItem.jsx', 'server/routes/items.js'). If omitted, maps the entire workspace."
+                    }
                 },
-                "required": [],
-            },
-        },
+                "required": []
+            }
+        }
     },
     {
         "type": "function",
@@ -609,18 +589,47 @@ TOOL_SCHEMAS = [
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "The search query to look up (e.g. 'FastAPI lifespan handlers', 'Tailwind v4 grid syntax').",
+                        "description": "The search query to look up (e.g. 'FastAPI lifespan handlers', 'Tailwind v4 grid syntax')."
                     },
                     "max_results": {
                         "type": "integer",
-                        "description": "Maximum number of search results to return (default: 5, range: 1-10).",
-                    },
+                        "description": "Maximum number of search results to return (default: 5, range: 1-10)."
+                    }
                 },
-                "required": ["query"],
-            },
-        },
+                "required": [
+                    "query"
+                ]
+            }
+        }
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "close_file",
+            "description": "Alias for unmount_file. Unmounts an active workspace file from Dynamic Virtual RAM, releasing working memory attention and token budget.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "The relative path to the file to unmount from Virtual RAM."
+                    }
+                },
+                "required": [
+                    "file_path"
+                ]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_mounted_files",
+            "description": "Lists all files currently mounted in Dynamic Virtual RAM, along with their line counts, token usage, and remaining budget capacity.",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            }
+        }
+    }
 ]
-
-
-

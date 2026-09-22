@@ -359,3 +359,66 @@ class TestVirtualRAMSuite:
         res = file_tools.unmount_file("not_mounted.py")
         assert "Error: File 'not_mounted.py' is not currently mounted in Virtual RAM" in res
         assert "Currently mounted files:" in res
+
+    def test_auto_mount_on_read_file(self, setup_sandbox):
+        tmp_path, file_tools, _ = setup_sandbox
+        target = tmp_path / "read_target.py"
+        target.write_text("print('auto mount on read')\n")
+
+        # Initially not mounted
+        assert "read_target.py" not in file_tools.mounted_virtual_ram
+
+        # Calling read_file auto-mounts the file
+        res = file_tools.read_file("read_target.py")
+        assert "auto mount on read" in res
+        assert "read_target.py" in file_tools.mounted_virtual_ram
+        assert "print('auto mount on read')" in file_tools.mounted_virtual_ram["read_target.py"]
+
+    def test_auto_mount_on_write_and_edit_file(self, setup_sandbox):
+        tmp_path, file_tools, _ = setup_sandbox
+
+        # Calling write_file auto-mounts the file
+        file_tools.write_file("auto_write.py", "x = 10\n")
+        assert "auto_write.py" in file_tools.mounted_virtual_ram
+        assert "x = 10" in file_tools.mounted_virtual_ram["auto_write.py"]
+
+        # Calling edit_file updates the mounted content
+        file_tools.edit_file("auto_write.py", "x = 10", "x = 20")
+        assert "auto_write.py" in file_tools.mounted_virtual_ram
+        assert "x = 20" in file_tools.mounted_virtual_ram["auto_write.py"]
+
+    def test_auto_mount_skips_when_exceeding_budget_without_error(self, setup_sandbox):
+        tmp_path, file_tools, _ = setup_sandbox
+        file_tools.model_name = "qwen2.5-coder:7b"
+        huge_file = tmp_path / "huge_auto.txt"
+        huge_content = "def sample():\n    pass\n" * 4000
+        huge_file.write_text(huge_content)
+
+        # Reading huge file does not fail, but safely skips auto-mounting
+        res = file_tools.read_file("huge_auto.txt")
+        assert "huge_auto.txt" in res
+        assert "huge_auto.txt" not in file_tools.mounted_virtual_ram
+
+    def test_virtual_ram_persistence_in_chat_history(self, setup_sandbox):
+        from project_manager.chat_history import ChatHistoryManager
+        tmp_path, _, _ = setup_sandbox
+
+        # Save Virtual RAM
+        test_ram = {"src/App.jsx": "export default function App() {}", "server/index.js": "const app = express();"}
+        ChatHistoryManager.save_virtual_ram(tmp_path, test_ram)
+
+        # Rehydrate Virtual RAM
+        rehydrated = ChatHistoryManager.get_virtual_ram(tmp_path)
+        assert rehydrated == test_ram
+
+    def test_telemetry_virtual_ram_files_list(self):
+        ram = {
+            "src/components/Sidebar.jsx": "export const Sidebar = () => null;",
+            "server/routes/api.js": "router.get('/health', (req, res) => res.json({ ok: true }));",
+        }
+        telemetry = ContextManager.get_context_telemetry(
+            messages=[{"role": "system", "content": "You are Chico."}],
+            mounted_virtual_ram=ram,
+        )
+        assert telemetry["virtual_ram_files"] == 2
+        assert telemetry["virtual_ram_files_list"] == ["server/routes/api.js", "src/components/Sidebar.jsx"]

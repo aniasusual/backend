@@ -11,11 +11,6 @@ from context import (
     ContextCompactor,
     StaticLayerManager,
     ContextManager,
-    RECENCY_ANCHOR_DEFAULT,
-    RECENCY_ANCHOR_CONFIRMATION,
-    RECENCY_ANCHOR_ERROR,
-    RECENCY_ANCHOR_CONVERSATIONAL,
-    RECENCY_ANCHOR_FIRST_MESSAGE,
 )
 
 __all__ = [
@@ -26,10 +21,5 @@ __all__ = [
     "ContextCompactor",
     "StaticLayerManager",
     "ContextManager",
-    "RECENCY_ANCHOR_DEFAULT",
-    "RECENCY_ANCHOR_CONFIRMATION",
-    "RECENCY_ANCHOR_ERROR",
-    "RECENCY_ANCHOR_CONVERSATIONAL",
-    "RECENCY_ANCHOR_FIRST_MESSAGE",
 ]
 
